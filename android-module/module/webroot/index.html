@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>微助教签到</title>
+<style>
+  html,body{margin:0;height:100%;background:#0f1115;color:#e6e9ef;
+            font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{display:flex;flex-direction:column;height:100%}
+  iframe{flex:1;width:100%;border:0;background:#0f1115}
+  .bar{padding:10px 14px;font-size:12px;color:#8b93a3;border-top:1px solid #252a34;
+       display:flex;justify-content:space-between;gap:12px}
+  a{color:#3ddc84;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <iframe src="http://127.0.0.1:8080/" referrerpolicy="no-referrer"></iframe>
+  <div class="bar">
+    <span>数据来自本机 8080 端口</span>
+    <a href="http://127.0.0.1:8080/" target="_blank">在浏览器打开 ↗</a>
+  </div>
+</div>
+</body>
+</html>

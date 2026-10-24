@@ -1,0 +1,6 @@
+id=tm-autosign
+name=微助教自动签到
+version=1.3.0
+versionCode=10
+author=dsh
+description=自动检测并完成微助教签到；root 拉起微信 OAuth 自动续号，本地网页面板监控。打开 http://127.0.0.1:8080 查看。

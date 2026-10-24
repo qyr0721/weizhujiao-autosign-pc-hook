@@ -28,3 +28,7 @@ desktop.ini
 
 # 本地工作日志
 .workbuddy/
+
+# 签到侧本地配置与状态
+signer/config.json
+openid.stale

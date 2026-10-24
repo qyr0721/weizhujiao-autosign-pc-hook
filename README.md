@@ -47,6 +47,34 @@ set WZ_NODE=C:\Program Files\nodejs\node.exe
 
 ---
 
+## 完整链路：取号 + 签到
+
+本仓库同时包含**两个平台**的实现，签到请求契约完全一致：
+
+| 平台 | 取号方式 | 签到 | 目录 |
+|---|---|---|---|
+| **Windows / PC 微信** | WMPF CDP 让内置浏览器后台走 OAuth | `signer/sign_pc.py` | 根目录 + `signer/` |
+| Android（Magisk/KernelSU） | root 拉起微信 OAuth 静默授权 + 读 Cookie 库 | `module/scripts/tm_flow.sh` | `android-module/` |
+
+PC 侧的闭环：
+
+```
+run.py
+ ├─ 代理守护（WMPFDebugger / 9421 / 62000）
+ ├─ 取号（只在 401 或没号时）：签到页 -> OAuth -> 新 openid -> openid.txt
+ └─ 签到侧 signer/sign_pc.py（独立进程，只吃 openid.txt）
+       GET  active_signs  ──401──> 写 openid.stale 并 exit(2)
+                                    └─> run.py 立刻续号 -> 重启签到侧
+       POST student-sign-in （命中即提交，幂等）
+```
+
+`start.bat` 默认两者一起跑；只要 `python run.py --no-sign` 可以只取号。
+
+签到侧配置（可选）：`cp signer/config.example.json signer/config.json`，填 `lat` / `lon`（GPS 签到用）、
+`poll`、`class_hours`。`signer/config.json` 已在 `.gitignore` 里，不会被提交。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -83,7 +111,9 @@ WMPF 的调试通道只在**小程序启动那一刻**建立（hook 打在 `Appl
 
 | 文件 | 作用 |
 |---|---|
-| `run.py` / `start.bat` | 一键入口：代理守护 + 通道守护 + 只在必要时取号 |
+| `run.py` / `start.bat` | 一键入口：代理守护 + 通道守护 + 按需取号 + 拉起签到侧 |
+| `signer/sign_pc.py` | **PC 侧签到器**：轮询 `active_signs`、命中即提交、幂等、GPS 抖动 |
+| `android-module/` | **Android 版**（原样引入，MIT）：Magisk/KernelSU 模块，含 Web 面板 |
 | `get_openid.py` | 取号核心：发现标签页 → 触发 → 捕获 → 落盘 |
 | `channel_keeper.py` | 三态探测（代理死 / 通道断 / 可用）+ 代理托管 |
 | `cdp_sign_agent.py` | 最小 CDP 客户端（`Target.attachToTarget` per-tab 会话） |

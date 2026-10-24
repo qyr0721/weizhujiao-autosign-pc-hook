@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>微助教签到</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--line:#252a34;--fg:#e6e9ef;--dim:#8b93a3;--ok:#3ddc84;--warn:#ffb454;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:17px;margin:0 0 14px;font-weight:600;letter-spacing:.5px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px}
+  .row .k{color:var(--dim);flex:0 0 auto}
+  .row .v{text-align:right;word-break:break-all;font-variant-numeric:tabular-nums}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+  pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:11px;margin:0;
+      font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;color:#b8c0cf;white-space:pre-wrap;word-break:break-all;max-height:46vh;overflow:auto}
+  .foot{color:var(--dim);font-size:12px;text-align:center;margin-top:10px}
+  .btns{display:flex;gap:10px}
+  button{flex:1;padding:12px 10px;border-radius:11px;border:1px solid var(--line);
+         background:#1e232c;color:var(--fg);font-size:14px;font-weight:500;letter-spacing:.3px}
+  button:active{background:#2a3140;transform:scale(.985)}
+  button.primary{border-color:#2f6b4a;background:#173225;color:#7ff0b0}
+  button.danger{border-color:#6b3232;background:#2e1919;color:#ff9b9b}
+  button:disabled{opacity:.45}
+  .coord{display:flex;gap:8px;margin-top:10px}
+  .coord input{flex:1;min-width:0;padding:11px 10px;border-radius:10px;border:1px solid var(--line);
+               background:#0b0d11;color:var(--fg);font:14px ui-monospace,Menlo,Consolas,monospace}
+  .coord input:focus{outline:none;border-color:#2f6b4a}
+  .coord button{flex:0 0 auto;padding:11px 14px}
+  .hint{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+<h1>微助教自动签到</h1>
+
+<div class="card">
+  <div class="row"><span class="k">状态</span><span class="v" id="state">—</span></div>
+  <div class="row"><span class="k">当前 openid</span><span class="v" id="oid">—</span></div>
+  <div class="row"><span class="k">签到情况</span><span class="v" id="active">—</span></div>
+  <div class="row"><span class="k">最近结果</span><span class="v" id="signed">—</span></div>
+  <div class="row"><span class="k">上次提交坐标</span><span class="v" id="coords">—</span></div>
+</div>
+
+<div class="card">
+  <div class="btns">
+    <button id="btnRefresh" class="primary">手动续号</button>
+    <button id="btnToggle" class="danger">暂停</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="padding-bottom:2px"><span class="k">坐标设置</span></div>
+  <div class="coord">
+    <input id="inLat" inputmode="decimal" placeholder="纬度 lat" autocomplete="off">
+    <input id="inLon" inputmode="decimal" placeholder="经度 lon" autocomplete="off">
+    <button id="btnCoord" class="primary">保存</button>
+  </div>
+  <div class="hint" id="coordHint">只在 isGPS&gt;0 的签到里使用；保存后 5 秒内生效，无需重启。</div>
+</div>
+
+<div class="card">
+  <div class="row"><span class="k">自动续号</span><span class="v" id="refresh">—</span></div>
+  <div class="row"><span class="k">页面时间</span><span class="v" id="time">—</span></div>
+</div>
+
+<div class="card">
+  <div class="row" style="padding-bottom:8px"><span class="k">最近日志</span></div>
+  <pre id="log">加载中…</pre>
+</div>
+
+<div class="foot">数据每 3 秒刷新 · 仅本机可访问</div>
+
+<script>
+function cls(s){
+  if(!s) return '';
+  if(/成功/.test(s)) return 'ok';
+  if(/失败|异常|过期/.test(s)) return 'err';
+  if(/续号|刷新/.test(s)) return 'warn';
+  return '';
+}
+function render(s){
+  if(!s){ document.getElementById('state').textContent='面板未就绪'; return; }
+  var st = document.getElementById('state');
+  st.innerHTML = '<span class="dot ' + (s.stateCls||'ok') + '"></span>' + (s.state||'—');
+  document.getElementById('oid').textContent      = s.oid || '—';
+  var a = document.getElementById('active');
+  a.textContent = s.active || '—';
+  a.className = 'v ' + (s.activeCls||'');
+  var g = document.getElementById('signed');
+  g.textContent = s.signed || '—';
+  g.className = 'v ' + cls(s.signed);
+  document.getElementById('coords').textContent  = s.coords || '—';
+
+  // 坐标输入框跟随当前配置，但不要打断正在输入的人
+  var il = document.getElementById('inLat'), io = document.getElementById('inLon');
+  if (il && document.activeElement !== il && s.lat) il.value = s.lat;
+  if (io && document.activeElement !== io && s.lon) io.value = s.lon;
+  document.getElementById('refresh').textContent = s.refresh || '—';
+  document.getElementById('time').textContent    = s.time || '—';
+  var lg = document.getElementById('log');
+  lg.textContent = Array.isArray(s.log) ? (s.log.join('\n') || '（空）') : (s.log || '（空）');
+
+  var off = String(s.enabled) === '0';
+  var bt = document.getElementById('btnToggle');
+  bt.textContent = off ? '启用' : '暂停';
+  bt.className = off ? 'primary' : 'danger';
+}
+
+function act(cmd){
+  var b1 = document.getElementById('btnRefresh'), b2 = document.getElementById('btnToggle');
+  b1.disabled = b2.disabled = true;
+  fetch('cgi-bin/action?cmd=' + cmd, { cache: 'no-store' })
+    .then(function(){ setTimeout(tick, 700); })
+    .catch(function(){ setTimeout(tick, 700); })
+    .then(function(){ setTimeout(function(){ b1.disabled = b2.disabled = false; }, 1500); });
+}
+document.getElementById('btnRefresh').onclick = function(){ act('refresh'); };
+document.getElementById('btnToggle').onclick  = function(){ act('toggle');  };
+
+document.getElementById('btnCoord').onclick = function(){
+  var il = document.getElementById('inLat'), io = document.getElementById('inLon');
+  var hint = document.getElementById('coordHint');
+  var lat = il.value.trim(), lon = io.value.trim();
+  if(!lat || !lon){ hint.textContent = '纬度和经度都要填'; return; }
+  hint.textContent = '保存中…';
+  fetch('cgi-bin/action?cmd=setcoord&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon),
+        { cache: 'no-store' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(j.ok){ hint.textContent = '已保存：' + j.lat + ', ' + j.lon + '（5 秒内生效）'; setTimeout(tick, 800); }
+      else    { hint.textContent = '保存失败：坐标不合法（纬度 ±90，经度 ±180）'; }
+    })
+    .catch(function(){ hint.textContent = '保存失败：无法连接后端'; });
+};
+function tick(){
+  var sc = document.createElement('script');
+  sc.src = 'status.js?_=' + Date.now();
+  sc.onload  = function(){ render(window.STATUS); sc.remove(); };
+  sc.onerror = function(){ document.getElementById('state').textContent = '读取状态失败'; sc.remove(); };
+  document.head.appendChild(sc);
+}
+tick();
+setInterval(tick, 3000);
+</script>
+</body>
+</html>

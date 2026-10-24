@@ -25,6 +25,7 @@ run.py — 一键入口：代理常驻 + 通道守护 + 自动取号/续号
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 import time
 
@@ -93,9 +94,21 @@ async def run(args, log):
     last_beat = 0.0
     last_try = 0.0
     ticks = 0
+    signer = None
+    if args.with_sign:
+        signer = start_signer(args, log)
 
     while True:
         ticks += 1
+
+        # 签到侧监督：它只在 401 时才退出（code=2），此时立刻续号
+        force = False
+        if signer is not None and signer.poll() is not None:
+            rc = signer.returncode
+            force = (rc == 2)
+            log("签到侧退出 code=%s%s" % (rc, "（发现 401，准备续号）" if force else ""))
+            signer = None
+
         try:
             state, targets, why = await ck.probe_channel()
         except Exception as exc:  # noqa: BLE001
@@ -114,6 +127,11 @@ async def run(args, log):
                 last_down = time.time()
                 log("通道未就绪（%s）——微信里还没有小程序连上 9421。" % why)
                 log("  请在微信里打开任意小程序一次；连上后可以缩到后台不管。")
+                if signer is None and args.with_sign:
+                    log("  签到侧不受通道影响，照常工作。")
+            # 签到不依赖通道，通道断时也要保证它在跑
+            if signer is None and args.with_sign and not force:
+                signer = start_signer(args, log)
             if args.once:
                 return 2
             await asyncio.sleep(args.poll)
@@ -123,7 +141,9 @@ async def run(args, log):
         cur = g.current_oid(args.out)
         st = g.oid_state(cur) if cur else "none"
 
-        if cur and st != "401":
+        if cur and st != "401" and not force:
+            if signer is None and args.with_sign:
+                signer = start_signer(args, log)
             if time.time() - last_beat > 300:
                 last_beat = time.time()
                 log("正常值守：号 %s… 状态=%s，通道 %d 个 target" % (cur[:8], st, len(targets)))
@@ -134,7 +154,7 @@ async def run(args, log):
 
         # 需要（重新）取号
         log("需要取号：%s" % ("没有号" if not cur else "当前号已 401"))
-        if time.time() - last_try < args.cooldown:
+        if time.time() - last_try < args.cooldown and not force:
             left = int(args.cooldown - (time.time() - last_try))
             log("  冷却中（防 a8key 重定向限流），%ds 后再试" % left)
             if args.once:
@@ -161,12 +181,30 @@ async def run(args, log):
             g.save(args.out, oid, how, args.url)
             log("  ✔ 拿到新号（%s）：%s" % (how, oid))
             log("    已写入 %s" % args.out)
+            # 续号完成，把签到侧拉起来（它启动时会清掉 openid.stale）
+            if args.with_sign and signer is None:
+                signer = start_signer(args, log)
         else:
             log("  ✘ 本轮失败（%s），%ds 后重试" % (how, int(args.cooldown)))
 
         if args.once:
             return 0 if oid else 4
         await asyncio.sleep(args.poll)
+
+
+def start_signer(args, log):
+    """签到侧是独立进程：它只吃 openid.txt，不依赖调试通道。
+    退出码 2 = 发现 401，此时主循环立刻续号再把它拉起来。"""
+    script = os.path.join(HERE, "signer", "sign_pc.py")
+    if not os.path.isfile(script):
+        log("找不到 signer/sign_pc.py，跳过签到侧")
+        return None
+    log("启动签到侧：signer/sign_pc.py")
+    try:
+        return subprocess.Popen([sys.executable, script, "--openid-file", args.out])
+    except Exception as exc:  # noqa: BLE001
+        log("签到侧启动失败：%s" % exc)
+        return None
 
 
 def port_open_or_spawn(sup, log):
@@ -188,6 +226,9 @@ def main():
     ap.add_argument("--observe", type=float, default=18.0)
     ap.add_argument("--check", action="store_true", help="只看状态")
     ap.add_argument("--once", action="store_true", help="跑一轮就退出（不常驻）")
+    ap.add_argument("--no-sign", dest="with_sign", action="store_false",
+                    help="不启动签到侧（只取号）")
+    ap.set_defaults(with_sign=True)
     ap.add_argument("--log", default=os.path.join(HERE, "run.log"))
     ap.add_argument("--wmpf-dir", default=ck.DEFAULT_WMPF)
     ap.add_argument("--node", default=ck.DEFAULT_NODE)

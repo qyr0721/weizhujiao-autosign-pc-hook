@@ -1,0 +1,62 @@
+#!/system/bin/sh
+# 面板后端：命令投递给 tm_flow.sh；坐标直接写 coord.conf
+CMD=/data/local/tmp/tm_cmd
+EN=/data/local/tmp/tm_enabled
+MODDIR=/data/adb/modules/tm-autosign
+COORD="$MODDIR/coord.conf"
+
+q="${QUERY_STRING:-}"
+
+field() {
+    # 严格只接受十进制数（可带负数与小数），其余一律丢弃。
+    # 不能用 tr 过滤——那会把 "abc;rm -rf /" 滤成 "3-2" 这种伪数字。
+    v=$(printf '%s' "$q" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    printf '%s' "$v" | grep -qE '^-?[0-9]{1,3}(\.[0-9]{1,10})?$' && printf '%s' "$v"
+}
+
+case "$q" in
+    *cmd=refresh*) echo refresh > "$CMD" ;;
+    *cmd=on*)      echo on      > "$CMD" ;;
+    *cmd=off*)     echo off     > "$CMD" ;;
+    *cmd=toggle*)
+        if [ "$(cat "$EN" 2>/dev/null)" = "0" ]; then
+            echo on > "$CMD"
+        else
+            echo off > "$CMD"
+        fi
+        ;;
+    *cmd=setcoord*)
+        lat=$(field lat)
+        lon=$(field lon)
+        # 基本范围校验：纬度 ±90，经度 ±180，且不能为 0/0
+        ok=1
+        [ -z "$lat" ] && ok=0
+        [ -z "$lon" ] && ok=0
+        awk -v a="$lat" -v b="$lon" 'BEGIN{
+            if (a=="" || b=="") exit 1;
+            if (a+0 < -90 || a+0 > 90) exit 1;
+            if (b+0 < -180 || b+0 > 180) exit 1;
+            if (a+0 == 0 && b+0 == 0) exit 1;
+            exit 0;
+        }' || ok=0
+        if [ "$ok" = "1" ]; then
+            printf 'LAT="%s"\nLON="%s"\n' "$lat" "$lon" > "$COORD"
+            chmod 600 "$COORD" 2>/dev/null
+            echo "Content-Type: application/json"
+            echo "Cache-Control: no-store"
+            echo ""
+            echo "{\"ok\":true,\"lat\":\"$lat\",\"lon\":\"$lon\"}"
+            exit 0
+        fi
+        echo "Content-Type: application/json"
+        echo "Cache-Control: no-store"
+        echo ""
+        echo '{"ok":false,"error":"invalid coordinate"}'
+        exit 0
+        ;;
+esac
+
+echo "Content-Type: application/json"
+echo "Cache-Control: no-store"
+echo ""
+echo '{"ok":true}'
