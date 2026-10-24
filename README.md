@@ -124,7 +124,7 @@ set WZ_WMPF_DIR=D:\tools\WMPFDebugger
 set WZ_NODE=C:\Program Files\nodejs\node.exe
 ```
 
-### 跑起来
+### 如何使用
 
 **方式一：下载打包好的 exe（推荐给不想装 Python 的人）**
 
@@ -258,9 +258,9 @@ python tools/pe_scan.py "<路径>\flue.dll" \
 
 ---
 
-## 姊妹项目
+## 其他项目
 
-- **Android 版**：[qyr0721/weizhujiao-autosign](https://github.com/qyr0721/weizhujiao-autosign)（MIT）
+- **Android root版**：[qyr0721/weizhujiao-autosign](https://github.com/qyr0721/weizhujiao-autosign)（MIT）
   Magisk / KernelSU 模块，走 root 静默授权 + 读 Cookie 库取号。签到接口契约与本文一致。
 
 ---
@@ -276,3 +276,5 @@ python tools/pe_scan.py "<路径>\flue.dll" \
   **GPL-2.0-only**；其 `src/third-party` 版权归腾讯所有。
 - 上游与贡献者：**evi0s/WMPFDebugger** 及其所有贡献者。
 - 请勿用于违反所在学校/机构规定的用途。
+
+  
