@@ -87,6 +87,24 @@ set WZ_NODE=C:\Program Files\nodejs\node.exe
 
 ### 跑起来
 
+**方式一：下载打包好的 exe（推荐给不想装 Python 的人）**
+
+到 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载 `wxsign.exe`，双击即可。
+它会先自检环境（微信进程 / WMPF 版本 / WMPFDebugger / Node），再一步步告诉你要点哪里：
+
+```
+【1/4】环境自检
+【2/4】启动调试代理（自动）
+【3/4】请在微信里：① 左侧「小程序」→ 点任意小程序（必做）
+                    ② 通讯录→公众号→微助教→底部「签到」（建议）
+【4/4】自动取号 + 签到已启动
+```
+
+> exe 只含调度与签到逻辑，**不含** WMPFDebugger（体积大且需自行装 frida 绑定）。
+> 不想直接跑可以用 `wxsign.exe --check` 只做自检。
+
+**方式二：源码运行**
+
 ```bash
 git clone https://github.com/qyr0721/weizhujiao-autosign-pc-hook.git
 cd weizhujiao-autosign-pc-hook
