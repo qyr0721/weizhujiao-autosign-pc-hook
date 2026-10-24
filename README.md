@@ -260,7 +260,7 @@ python tools/pe_scan.py "<路径>\flue.dll" \
 
 ## 其他项目
 
-- **Android root版**：[qyr0721/weizhujiao-autosign](https://github.com/qyr0721/weizhujiao-autosign)（MIT）
+- **Android root版**：[qyr0721/weizhujiao-autosign-android](https://github.com/qyr0721/weizhujiao-autosign)（MIT）
   Magisk / KernelSU 模块，走 root 静默授权 + 读 Cookie 库取号。签到接口契约与本文一致。
 
 ---
