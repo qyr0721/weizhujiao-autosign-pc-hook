@@ -9,6 +9,7 @@ run_all.py — 一次性跑完所有可离线执行的测试
   1. mux       多客户端 CDP 复用（id 去重/单播/广播/断线回收）   [需要 tsx]
   2. agent     页内 agent 的 21 条行为契约                    [需要 node]
   3. classify  授权触发判定 + URL 构造（纯函数）               [纯 python]
+  4. signcore  签到核心契约：无时段闸门 / 空闲退避 / 幂等 / 401    [纯 python]
 
 不包含需要真实微信通道的测试（那部分见 auto_probe.py）。
 """
@@ -47,6 +48,7 @@ def main():
 
     results.append(("agent", run("agent_test", [node, "test/agent_test.js"], ROOT)))
     results.append(("classify", run("classify_test", [sys.executable, "test/classify_test.py"], ROOT)))
+    results.append(("signcore", run("signcore_test", [sys.executable, "test/signcore_test.py"], ROOT)))
 
     print("\n================ 汇总 ================")
     bad = 0

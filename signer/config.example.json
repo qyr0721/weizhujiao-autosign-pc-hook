@@ -1,8 +1,9 @@
 {
   "poll": 5,
+  "idle_poll": 30,
+  "idle_after": 6,
   "lat": 30.123456,
   "lon": 120.123456,
   "jitter_deg": 0.00003,
-  "class_hours": [7, 23],
   "notify": true
 }

@@ -27,11 +27,12 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541f38) XWEB/25799")
 
 DEFAULTS = {
-    "poll": 5,
+    "poll": 5,            # 有签到在挂时 / 刚启动时的轮询间隔
+    "idle_poll": 30,      # 连续空窗期的轮询间隔（自适应退避，不依赖时钟）
+    "idle_after": 6,      # 连续多少次空结果后进入退避
     "jitter_deg": 0.00003,
     "lat": None,
     "lon": None,
-    "class_hours": [7, 23],
 }
 
 
@@ -78,10 +79,14 @@ def req(method, path, oid, body=None, timeout=15):
         return -1, "NETERR %s" % exc
 
 
-def in_hours(cfg):
-    h = time.localtime().tm_hour
-    lo, hi = cfg.get("class_hours") or [0, 24]
-    return lo <= h < hi
+def sleep_guarded(sec, stop):
+    """可被 stop 打断的睡眠。"""
+    end = time.time() + sec
+    while time.time() < end:
+        if stop is not None and stop.is_set():
+            return False
+        time.sleep(min(0.5, max(0.0, end - time.time())))
+    return True
 
 
 def jitter(cfg):
@@ -104,11 +109,16 @@ def is_dup(text):
 
 def sign_loop(cfg, openid_file, once=False, dry_run=False,
               stale_event=None, log=None, stop=None):
-    """主循环。返回退出码：0 正常 / 2 号失效（需续号）/ 3 无号 / 4 查询失败"""
+    """主循环。返回退出码：0 正常 / 2 号失效（需续号）/ 3 无号 / 4 查询失败
+
+    不设时段闸门：有没有课由服务端 active_signs 决定；
+    空窗期靠自适应退避降频（idle_after → idle_poll），一发现签到立刻恢复 poll。
+    """
     log = log or (lambda m: print("[%s] %s" % (ts(), m), flush=True))
     stale_marker = os.path.join(os.path.dirname(os.path.abspath(openid_file)), "openid.stale")
     signed = set()
-    last_idle = 0.0
+    empty_streak = 0
+    last_note = 0.0
 
     if not stale_event and os.path.isfile(stale_marker):
         os.remove(stale_marker)
@@ -122,16 +132,7 @@ def sign_loop(cfg, openid_file, once=False, dry_run=False,
             log("还没有 openid，等续号侧产出")
             if once:
                 return 3
-            time.sleep(5)
-            continue
-
-        if not in_hours(cfg):
-            if time.time() - last_idle > 300:
-                last_idle = time.time()
-                log("非上课时段，待命（class_hours=%s）" % (cfg.get("class_hours"),))
-            if once:
-                return 0
-            time.sleep(30)
+            sleep_guarded(5, stop)
             continue
 
         status, body = req("GET", "/student/active_signs", oid)
@@ -147,7 +148,7 @@ def sign_loop(cfg, openid_file, once=False, dry_run=False,
             log("查询失败 HTTP %s %s" % (status, body[:100]))
             if once:
                 return 4
-            time.sleep(cfg.get("poll", 5) * 2)
+            sleep_guarded(cfg.get("poll", 5) * 2, stop)
             continue
 
         try:
@@ -184,7 +185,19 @@ def sign_loop(cfg, openid_file, once=False, dry_run=False,
             log("本轮结束：进行中 %d 个，已签 %d 个" % (len(items), len(signed)))
             return 0
 
-        for _ in range(int(cfg.get("poll", 5)) * 2):
-            if stop is not None and stop.is_set():
-                return 0
-            time.sleep(0.5)
+        # 自适应退避：连续空窗 → 降到 idle_poll；一旦有签到 → 立刻回到 poll
+        if items:
+            empty_streak = 0
+        else:
+            empty_streak += 1
+        if empty_streak >= int(cfg.get("idle_after", 6)):
+            delay = cfg.get("idle_poll", 30)
+            if time.time() - last_note > 600:
+                last_note = time.time()
+                log("空窗 %d 次，降至 %ds 一次（有签到会立刻恢复 %ds）"
+                    % (empty_streak, int(delay), int(cfg.get("poll", 5))))
+        else:
+            delay = cfg.get("poll", 5)
+
+        if not sleep_guarded(delay, stop):
+            return 0

@@ -14,7 +14,7 @@
 | **幂等** | `repeat sign in` / `已经签到` / `errorCode 305` 一律视为已签，不重复提交 |
 | **多课程** | 接口返回哪门课就签哪门，不用配课程号 |
 | **GPS 签到** | `isGPS` 为真时按 `jitter_deg` 抖动提交经纬度 |
-| **时段闸门** | 只在 `class_hours` 内工作，半夜不瞎跑 |
+| **全天候** | 不设时段闸门——有没有课由服务端说了算，空窗期自动降频（`idle_poll`） |
 | **自愈** | 签到侧一退出就续号并拉起，`run.py` 常驻监督 |
 | **双平台** | PC 版（本目录）+ Android 版（`android-module/`，原样引入） |
 
@@ -118,10 +118,26 @@ start.bat                 # 常驻（取号 + 签到一起跑）
 
 ```bash
 cp signer/config.example.json signer/config.json
-# 填 lat / lon（GPS 签到用）、poll、class_hours
+# 填 lat / lon（GPS 签到用）、poll、idle_poll / idle_after
 ```
 
 > `signer/config.json` 在 `.gitignore` 里，不会被提交。
+
+### 为什么没有「上课时段」
+
+时段闸门（`class_hours`）已移除。原因很简单：**有没有课不该由本地时钟猜**。
+课表可能调课、临时测验、周末补课，本地时间一到 23:00 就停等于把该签的漏掉。
+
+现在的做法是让服务端说话：
+
+```
+每 poll 秒查一次 active_signs
+  ├─ 有签到          → 立刻提交（立即）
+  └─ 连续 idle_after 次为空 → 降到 idle_poll 秒一次（默认 30s）
+        一旦再次出现签到 → 立刻恢复 poll（默认 5s）
+```
+
+这样半夜没有课时只是低频探活（30 秒一次），一有课在 30 秒内发现，而不是被时钟挡在门外。
 
 ### 关于「通道」
 
@@ -144,7 +160,7 @@ WMPF 的调试通道只在**小程序启动那一刻**建立（hook 打在 `Appl
 | 路径 | 作用 |
 |---|---|
 | `run.py` / `start.bat` | 一键入口：代理 + 通道 + 续号 + 拉起签到侧 |
-| `signer/sign_pc.py` | **PC 侧签到器**（轮询 / 提交 / 幂等 / GPS / 时段） |
+| `signer/sign_pc.py` | **PC 侧签到器**（轮询 / 提交 / 幂等 / GPS / 空闲退避） |
 | `get_openid.py` | 续号核心：多策略触发（S0/S3/S1/S2）+ 落点捕获 |
 | `channel_keeper.py` | 三态探测（代理死 / 通道断 / 可用）+ 代理托管 |
 | `cdp_sign_agent.py` | 最小 CDP 客户端（`Target.attachToTarget` per-tab 会话） |
