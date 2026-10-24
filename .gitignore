@@ -1,0 +1,30 @@
+# 凭证与运行产物：绝不入库
+openid.txt
+*.tmp
+t.txt
+state.json
+
+# 日志
+*.log
+watch.log
+proxy.log
+
+# 探测结果（含带 openid 的 URL）
+probe_report.md
+probe_report.json
+get_openid.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 本地工作日志
+.workbuddy/

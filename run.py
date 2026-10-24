@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+run.py — 一键入口：代理常驻 + 通道守护 + 自动取号/续号
+
+它做什么
+  1. 确保代理在跑（已在跑就不再起，避免重复 frida attach / 端口冲突）
+  2. 盯着 9421 通道：没有小程序连着时只提示，不反复折腾
+  3. 通道可用时检查 openid：
+       - 没有号        -> 取一次
+       - 号已 401      -> 用签到页换一次新的
+       - 号还好        -> 什么都不做（**定时乱续会把旧号顶掉**）
+  4. 全程常驻。退出时**不关闭代理**——代理一断，微信会立刻把小程序关掉。
+
+为什么退出不关代理
+  小程序是以调试态拉起的（scene=1101 / remoteDebugMode=1），9421 那条 WebSocket
+  就是它的生命线。关代理 = 杀小程序。所以这里默认只退出本进程，代理留着。
+
+用法
+  python run.py                # 常驻
+  python run.py --check        # 只看状态就退出
+  python run.py --once         # 跑一轮判断（不常驻）
+  python run.py --url "<授权链接>"
+"""
+import argparse
+import asyncio
+import os
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "tools"))
+
+import channel_keeper as ck          # noqa: E402
+import get_openid as g               # noqa: E402
+
+
+def ts():
+    return time.strftime("%H:%M:%S")
+
+
+class Log:
+    def __init__(self, path=""):
+        self.f = open(path, "a", encoding="utf-8") if path else None
+
+    def __call__(self, msg):
+        line = "[%s] %s" % (ts(), msg)
+        print(line, flush=True)
+        if self.f:
+            self.f.write(line + "\n")
+            self.f.flush()
+
+    def close(self):
+        if self.f:
+            self.f.close()
+
+
+BANNER = """
+============================================================
+ 微助教取号 · 一键启动
+------------------------------------------------------------
+ 代理：自动检查 / 拉起（已在跑就复用，不会重复注入）
+ 通道：需要微信里有一个小程序连着。若下面提示「通道未就绪」，
+       请在微信里打开任意小程序一次；连上后可以缩到后台不管。
+ 取号：只在「没有号」或「号已 401」时才动手，不会乱续。
+ 退出：Ctrl+C。退出不会关闭代理，小程序不受影响。
+============================================================
+"""
+
+
+def has_sign_tab(targets):
+    return any("teachermate" in (t.get("url") or "")
+               and t.get("type") in ("page", "webview") for t in targets)
+
+
+async def run(args, log):
+    sup = ck.ProxySupervisor(args.wmpf_dir, args.node)
+
+    if not port_open_or_spawn(sup, log):
+        return 3
+
+    if args.check:
+        state, targets, why = await ck.probe_channel()
+        cur = g.current_oid(args.out)
+        st = g.oid_state(cur) if cur else "none"
+        print("proxy   : up (%s)" % ("own" if sup.proc else "external"))
+        print("channel : %s (%s), targets=%d" % (state, why, len(targets)))
+        print("openid  : %s  state=%s" % (cur or "(无)", st))
+        return 0 if state == ck.CHANNEL_UP else 2
+
+    last_down = 0.0
+    last_beat = 0.0
+    last_try = 0.0
+    ticks = 0
+
+    while True:
+        ticks += 1
+        try:
+            state, targets, why = await ck.probe_channel()
+        except Exception as exc:  # noqa: BLE001
+            log("探测异常：%s" % exc)
+            state, targets, why = ck.CHANNEL_DOWN, [], "probe-error"
+
+        if state == ck.PROXY_DOWN:
+            log("代理没在监听（%s），尝试拉起..." % why)
+            if not port_open_or_spawn(sup, log):
+                log("代理起不来，30s 后重试")
+            await asyncio.sleep(30)
+            continue
+
+        if state == ck.CHANNEL_DOWN:
+            if time.time() - last_down > 60:
+                last_down = time.time()
+                log("通道未就绪（%s）——微信里还没有小程序连上 9421。" % why)
+                log("  请在微信里打开任意小程序一次；连上后可以缩到后台不管。")
+            if args.once:
+                return 2
+            await asyncio.sleep(args.poll)
+            continue
+
+        # 通道可用
+        cur = g.current_oid(args.out)
+        st = g.oid_state(cur) if cur else "none"
+
+        if cur and st != "401":
+            if time.time() - last_beat > 300:
+                last_beat = time.time()
+                log("正常值守：号 %s… 状态=%s，通道 %d 个 target" % (cur[:8], st, len(targets)))
+            if args.once:
+                return 0
+            await asyncio.sleep(args.poll)
+            continue
+
+        # 需要（重新）取号
+        log("需要取号：%s" % ("没有号" if not cur else "当前号已 401"))
+        if time.time() - last_try < args.cooldown:
+            left = int(args.cooldown - (time.time() - last_try))
+            log("  冷却中（防 a8key 重定向限流），%ds 后再试" % left)
+            if args.once:
+                return 4
+            await asyncio.sleep(min(left, args.poll))
+            continue
+
+        last_try = time.time()
+        from_sign = has_sign_tab(targets)
+        shim = type("A", (), {})()
+        shim.from_sign = from_sign
+        shim.url = args.url
+        shim.out = args.out
+        shim.observe = args.observe
+
+        log("  方式：%s" % ("用签到页换号" if from_sign else "用任意 H5 页触发"))
+        try:
+            oid, how = await g.one_attempt(shim, log)
+        except Exception as exc:  # noqa: BLE001
+            log("  异常：%s: %s" % (type(exc).__name__, str(exc)[:140]))
+            oid, how = None, "exception"
+
+        if oid:
+            g.save(args.out, oid, how, args.url)
+            log("  ✔ 拿到新号（%s）：%s" % (how, oid))
+            log("    已写入 %s" % args.out)
+        else:
+            log("  ✘ 本轮失败（%s），%ds 后重试" % (how, int(args.cooldown)))
+
+        if args.once:
+            return 0 if oid else 4
+        await asyncio.sleep(args.poll)
+
+
+def port_open_or_spawn(sup, log):
+    if sup.proc is not None and sup.proc.poll() is not None:
+        log("代理已退出 code=%s" % sup.proc.returncode)
+        sup.proc = None
+    ok = sup.ensure()
+    if ok:
+        log("代理就绪：%s" % ("复用已有" if sup.proc is None else "已拉起"))
+    return ok
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", default=g.DEFAULT_URL)
+    ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
+    ap.add_argument("--poll", type=float, default=10.0)
+    ap.add_argument("--cooldown", type=float, default=300.0)
+    ap.add_argument("--observe", type=float, default=18.0)
+    ap.add_argument("--check", action="store_true", help="只看状态")
+    ap.add_argument("--once", action="store_true", help="跑一轮就退出（不常驻）")
+    ap.add_argument("--log", default=os.path.join(HERE, "run.log"))
+    ap.add_argument("--wmpf-dir", default=ck.DEFAULT_WMPF)
+    ap.add_argument("--node", default=ck.DEFAULT_NODE)
+    args = ap.parse_args()
+
+    log = Log(args.log)
+    if not args.check and not args.once:
+        print(BANNER)
+    try:
+        code = asyncio.run(run(args, log))
+    except KeyboardInterrupt:
+        log("已停止。**代理仍在运行**（这样小程序不会被关掉）。")
+        log("如需连代理一起关，请手动结束 node 进程。")
+        code = 0
+    finally:
+        log.close()
+    sys.exit(code or 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,252 @@
+{
+  "dll": "C:/Users/Admin/AppData/Roaming/Tencent/xwechat/xplugin/plugins/RadiumWMPF/25799/extracted/runtime/flue.dll",
+  "image_base": 6442450944,
+  "strings": [
+    {
+      "rva": 201185520,
+      "kind": "ascii",
+      "text": "a8key_redirect_limit"
+    },
+    {
+      "rva": 201185541,
+      "kind": "ascii",
+      "text": "IsRedirectLimitReached"
+    },
+    {
+      "rva": 201185581,
+      "kind": "ascii",
+      "text": "A8KeyNavigationThrottle::CheckURL"
+    },
+    {
+      "rva": 201185640,
+      "kind": "ascii",
+      "text": "A8KeyNavigationThrottle::Redirect"
+    },
+    {
+      "rva": 201185707,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com"
+    },
+    {
+      "rva": 201185827,
+      "kind": "ascii",
+      "text": "A8KeyRateLimiter: duplicate request for "
+    },
+    {
+      "rva": 201185868,
+      "kind": "ascii",
+      "text": "A8KeyRateLimiter: cache expired for "
+    },
+    {
+      "rva": 201185905,
+      "kind": "ascii",
+      "text": "A8KeyRateLimiter: cache hit for "
+    },
+    {
+      "rva": 201185952,
+      "kind": "ascii",
+      "text": "oauth2/authorize/connect/oauth2/authorize"
+    },
+    {
+      "rva": 201185977,
+      "kind": "ascii",
+      "text": "oauth2/authorize"
+    },
+    {
+      "rva": 207080493,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com/wxaruntime/qrconnect"
+    },
+    {
+      "rva": 207098939,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com"
+    },
+    {
+      "rva": 220047912,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com/wxaruntime/Getuuid"
+    },
+    {
+      "rva": 220047992,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com/wxaruntime/Getqrcode"
+    },
+    {
+      "rva": 221913054,
+      "kind": "ascii",
+      "text": "open.weixin.qq.com/"
+    }
+  ],
+  "xrefs": [
+    {
+      "str_rva": 201185707,
+      "str": "open.weixin.qq.com",
+      "kind": "ascii",
+      "xref_rva": 39839796,
+      "func_rva": 39838496,
+      "func_end": 39847135
+    },
+    {
+      "str_rva": 201185707,
+      "str": "open.weixin.qq.com",
+      "kind": "ascii",
+      "xref_rva": 39862825,
+      "func_rva": 39862480,
+      "func_end": 39863428
+    },
+    {
+      "str_rva": 201185707,
+      "str": "open.weixin.qq.com",
+      "kind": "ascii",
+      "xref_rva": 40119450,
+      "func_rva": 40119248,
+      "func_end": 40120403
+    },
+    {
+      "str_rva": 201185707,
+      "str": "open.weixin.qq.com",
+      "kind": "ascii",
+      "xref_rva": 40120618,
+      "func_rva": 40120416,
+      "func_end": 40121571
+    },
+    {
+      "str_rva": 201185707,
+      "str": "open.weixin.qq.com",
+      "kind": "ascii",
+      "xref_rva": 40206349,
+      "func_rva": 40206304,
+      "func_end": 40206797
+    },
+    {
+      "str_rva": 201185520,
+      "str": "a8key_redirect_limit",
+      "kind": "ascii",
+      "xref_rva": 39841433,
+      "func_rva": 39838496,
+      "func_end": 39847135
+    },
+    {
+      "str_rva": 201185541,
+      "str": "IsRedirectLimitReached",
+      "kind": "ascii",
+      "xref_rva": 39841972,
+      "func_rva": 39838496,
+      "func_end": 39847135
+    },
+    {
+      "str_rva": 201185581,
+      "str": "A8KeyNavigationThrottle::CheckURL",
+      "kind": "ascii",
+      "xref_rva": 39846034,
+      "func_rva": 39838496,
+      "func_end": 39847135
+    },
+    {
+      "str_rva": 201185581,
+      "str": "A8KeyNavigationThrottle::CheckURL",
+      "kind": "ascii",
+      "xref_rva": 39846138,
+      "func_rva": 39838496,
+      "func_end": 39847135
+    },
+    {
+      "str_rva": 201185581,
+      "str": "A8KeyNavigationThrottle::CheckURL",
+      "kind": "ascii",
+      "xref_rva": 39851590,
+      "func_rva": 39847568,
+      "func_end": 39852044
+    },
+    {
+      "str_rva": 201185640,
+      "str": "A8KeyNavigationThrottle::Redirect",
+      "kind": "ascii",
+      "xref_rva": 39851737,
+      "func_rva": 39847568,
+      "func_end": 39852044
+    },
+    {
+      "str_rva": 201185827,
+      "str": "A8KeyRateLimiter: duplicate request for ",
+      "kind": "ascii",
+      "xref_rva": 39854424,
+      "func_rva": 39853936,
+      "func_end": 39855689
+    },
+    {
+      "str_rva": 201185868,
+      "str": "A8KeyRateLimiter: cache expired for ",
+      "kind": "ascii",
+      "xref_rva": 39855096,
+      "func_rva": 39853936,
+      "func_end": 39855689
+    },
+    {
+      "str_rva": 201185905,
+      "str": "A8KeyRateLimiter: cache hit for ",
+      "kind": "ascii",
+      "xref_rva": 39855339,
+      "func_rva": 39853936,
+      "func_end": 39855689
+    }
+  ],
+  "functions": [
+    {
+      "rva": 39838496,
+      "size": 8639,
+      "refs": [
+        "A8KeyNavigationThrottle::CheckURL",
+        "IsRedirectLimitReached",
+        "a8key_redirect_limit",
+        "open.weixin.qq.com"
+      ]
+    },
+    {
+      "rva": 39847568,
+      "size": 4476,
+      "refs": [
+        "A8KeyNavigationThrottle::CheckURL",
+        "A8KeyNavigationThrottle::Redirect"
+      ]
+    },
+    {
+      "rva": 39853936,
+      "size": 1753,
+      "refs": [
+        "A8KeyRateLimiter: cache expired for ",
+        "A8KeyRateLimiter: cache hit for ",
+        "A8KeyRateLimiter: duplicate request for "
+      ]
+    },
+    {
+      "rva": 39862480,
+      "size": 948,
+      "refs": [
+        "open.weixin.qq.com"
+      ]
+    },
+    {
+      "rva": 40119248,
+      "size": 1155,
+      "refs": [
+        "open.weixin.qq.com"
+      ]
+    },
+    {
+      "rva": 40120416,
+      "size": 1155,
+      "refs": [
+        "open.weixin.qq.com"
+      ]
+    },
+    {
+      "rva": 40206304,
+      "size": 493,
+      "refs": [
+        "open.weixin.qq.com"
+      ]
+    }
+  ]
+}
