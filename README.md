@@ -193,6 +193,7 @@ WMPF 的调试通道只在**小程序启动那一刻**建立（hook 打在 `Appl
 | `tools/probe_a8key.py` + `tools/hook_a8key.js` | a8key 拦截层观察（逆向用） |
 | `tools/trigger_oauth.py` | 授权触发三变体（`href` / `open` / `nav`）重测 |
 | `tools/oid_probe.py` | openid 探针（单次校验 / 生命周期观测 / SSR 校验） |
+| `tools/start_proxy.js` | 脱离终端常驻启动代理（无 shell 可用的环境） |
 | `patches/proxy-mux.ts` | CDP 代理多客户端复用（id 重写） |
 | `docs/` | [`DESIGN.md`](docs/DESIGN.md) 机制与取舍；[`TESTING.md`](docs/TESTING.md) 测试说明 |
 | `test/` | 离线测试（`python test/run_all.py`） |
