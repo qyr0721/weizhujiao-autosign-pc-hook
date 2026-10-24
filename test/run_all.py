@@ -9,6 +9,7 @@ run_all.py — 一次性跑完所有可离线执行的测试
   1. mux       多客户端 CDP 复用（id 去重/单播/广播/断线回收）      [需要 tsx]
   2. classify  授权触发判定 + URL 构造（纯函数）                    [纯 python]
   3. signcore  签到核心契约：无时段闸门 / 空闲退避 / 幂等 / 401       [纯 python]
+  4. ui        面板布局对齐 / 日志→状态映射 / ANSI 定点重绘          [纯 python]
 
 不包含需要真实微信通道的部分（那需要一台装着微信的机器）。
 """
@@ -48,6 +49,7 @@ def main():
 
     results.append(("classify", run("classify_test", [sys.executable, "test/classify_test.py"], ROOT)))
     results.append(("signcore", run("signcore_test", [sys.executable, "test/signcore_test.py"], ROOT)))
+    results.append(("ui", run("ui_test", [sys.executable, "test/ui_test.py"], ROOT)))
 
     print("\n================ 汇总 ================")
     bad = 0

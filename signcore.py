@@ -40,15 +40,19 @@ def ts():
     return time.strftime("%H:%M:%S")
 
 
-def load_cfg(path):
+def load_cfg(path, warn=None):
     cfg = dict(DEFAULTS)
     if path and os.path.isfile(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f) or {}
             if "class_hours" in data:
-                print("[!] config 里的 class_hours 已废弃（不再按时段待命），已忽略；"
-                      "空窗降频用 idle_poll / idle_after", flush=True)
+                msg = ("config 里的 class_hours 已废弃（不再按时段待命），已忽略；"
+                       "空窗降频用 idle_poll / idle_after")
+                if warn is not None:
+                    warn(msg)
+                else:
+                    print("[!] " + msg, flush=True)
                 data.pop("class_hours", None)
             cfg.update(data)
         except Exception:  # noqa: BLE001

@@ -70,7 +70,15 @@ def ts():
     return time.strftime("%H:%M:%S")
 
 
+# 外部可注入的输出口：面板模式（wizard/exe）把它接到日志文件，
+# 避免调试信息打乱界面。默认仍然是直接打印。
+OUT = None
+
+
 def say(msg):
+    if OUT is not None:
+        OUT(msg)
+        return
     print("[%s] %s" % (ts(), msg), flush=True)
 
 
@@ -84,6 +92,9 @@ def port_open(port, host="127.0.0.1", timeout=0.6):
 
 # ------------------------------------------------------------------ 代理托管
 class ProxySupervisor:
+    # 代理 stdout 逐行的去处。面板模式（wizard/exe）会替换成写日志。
+    SINK = None
+
     def __init__(self, wmpf_dir, node, extra_args=None):
         self.wmpf_dir = wmpf_dir
         self.node = node
@@ -117,7 +128,12 @@ class ProxySupervisor:
         def pump(pipe):
             for raw in iter(pipe.readline, b""):
                 line = raw.decode("utf-8", "replace").rstrip()
-                if line:
+                if not line:
+                    continue
+                sink = ProxySupervisor.SINK
+                if sink is not None:
+                    sink(line)
+                else:
                     print("    | %s" % line, flush=True)
 
         threading.Thread(target=pump, args=(self.proc.stdout,), daemon=True).start()

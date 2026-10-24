@@ -1,0 +1,184 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+ui_test.py — 面板布局与状态机（不需要微信，纯字符串断言）
+
+  python test/ui_test.py
+
+测什么
+  · 每一行显示宽度一致（中文算 2 列），边框不会歪
+  · 超长文本按显示宽度截断，不撑破边框
+  · 日志文本 → 面板两句话 的映射
+  · 纯文本模式不输出框线
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+
+import wizard as W  # noqa: E402
+
+PASS = 0
+FAIL = 0
+
+
+def ok(cond, name, extra=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print("  PASS  %s" % name)
+    else:
+        FAIL += 1
+        print("  FAIL  %s   %s" % (name, extra))
+
+
+def base_info(**kw):
+    d = {
+        "wechat": "4.1.15.56", "wmpf": "25799", "wmpf_ok": True,
+        "ok": True, "note": "全部就绪",
+        "action": "等待小程序连接",
+        "hint": ["在微信打开：「小程序」→ 搜索「小程序示例」",
+                 "微信官方示例，体积很小；打开后可缩到后台"],
+        "sign": "", "sign_kind": "none",
+        "logfile": "logs\\wxsign-20261025-0251.log",
+    }
+    d.update(kw)
+    return d
+
+
+def main():
+    term = W.Term(plain=True)
+    panel = W.Panel(term)
+
+    print("=== 宽度工具 ===")
+    ok(W.dwidth("abc") == 3, "ASCII 宽度")
+    ok(W.dwidth("中文") == 4, "中文按 2 列")
+    ok(W.dwidth("a中b") == 4, "混排宽度")
+    ok(W.dwidth(W.fit("短", 10)) == 10, "fit 补齐到指定宽度")
+    ok(W.dwidth(W.fit("超长文本" * 30, 20)) == 20, "fit 截断后宽度不变")
+    ok("..." in W.fit("超长文本" * 30, 20), "截断处有 ASCII 省略标记")
+
+    print("\n=== 布局对齐 ===")
+    rows = panel.compose(base_info())
+    box = rows[0:5]                      # 标题框：唯一带右边框的区域
+    widths = {W.dwidth(r) for r in box}
+    ok(len(widths) == 1, "标题框所有行同宽（%s）" % widths, str(sorted(widths)))
+    ok(widths == {W.TOTAL}, "宽度等于 TOTAL=%d" % W.TOTAL, str(widths))
+    ok(box[0].startswith("┌") and box[-1].startswith("└"), "标题框上下边框正确")
+    ok(all(r.startswith("│") and r.endswith("│") for r in box[1:4]), "标题框左右边框闭合")
+
+    long_info = base_info(action="正在取号…" + "很长" * 60,
+                          sign="12:34:56 签到成功 " + "x" * 100)
+    rows2 = panel.compose(long_info)
+    ok({W.dwidth(r) for r in rows2[0:5]} == {W.TOTAL}, "超长内容不影响标题框对齐")
+
+    print("\n=== 状态机：日志 → 面板 ===")
+    st = W.State(base_info())
+
+    ok(st.feed("正常值守：号 4026a8fb6a7302adcb175ce689b62be4 状态=ok，通道 26 个 target"),
+       "值守消息触发重绘")
+    ok("监视中" in st.info["action"], "值守 → 监视中", st.info["action"])
+    ok("4026a8fb" in st.info["action"], "动作里带号前缀", st.info["action"])
+    ok(st.channel is True, "通道标记为已连接")
+    ok(st.info["hint"] == st.hint_live, "连上后提示语切换")
+
+    st.feed("通道未就绪（no-reply）——微信里还没有小程序连上 9421。")
+    ok(st.channel is False, "通道断开回落到未连接")
+    ok("等待小程序" in st.info["action"], "断连 → 等待小程序", st.info["action"])
+    ok(st.info["hint"] == st.hint_idle, "提示语切回打开小程序")
+
+    st.feed("  [签到] ✔ 签到成功 signId=12345 {\"signRank\": 7}")
+    ok(st.info["sign_kind"] == "ok", "签到成功 → 绿色 ok")
+    ok("签到成功" in st.info["sign"], "签到行含成功字样", st.info["sign"])
+
+    st.feed("  [签到] · 已签到（幂等）signId=12345")
+    ok(st.info["sign_kind"] == "dup", "幂等 → dup 样式")
+
+    st.feed("  [签到] ✘ 签到失败 signId=99 HTTP 500")
+    ok(st.info["sign_kind"] == "fail", "失败 → 红色")
+
+    st.feed("  [签到] openid 已失效（401，被顶掉）——请求续号")
+    ok("换号" in st.info["action"], "401 → 提示换号", st.info["action"])
+
+    # 通道没通时报 401，不能假装在换号（换不了）
+    st2 = W.State(base_info())
+    st2.feed("  [签到] openid 已失效（401，被顶掉）——请求续号")
+    ok("等待小程序连接" in st2.info["action"], "通道未通时 401 归入等待", st2.info["action"])
+    ok("换号" in st2.info["action"], "但仍说明连上后会换号", st2.info["action"])
+
+    st.feed("  ✔ 拿到新号（S3-Page.navigate）：60536dd83a0a067b61c3cf1eaa3a7cf9")
+    ok("换号成功" in st.info["action"], "拿到新号 → 换号成功", st.info["action"])
+    ok("60536dd8" in st.info["action"], "新号前缀显示出来", st.info["action"])
+
+    st.feed("需要取号：当前号已 401")
+    ok("取号" in st.info["action"], "取号中状态", st.info["action"])
+
+    ok(st.feed("完全无关的一行") is False, "无关日志不触发重绘")
+
+    print("\n=== 纯文本模式 ===")
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        p2 = W.Panel(W.Term(plain=True))
+        p2.render(base_info(action="监视中"))
+    out = buf.getvalue()
+    ok("│" not in out and "╭" not in out, "plain 模式不输出框线", repr(out[:40]))
+    ok("监视中" in out, "plain 模式仍显示动作", repr(out))
+
+    buf2 = io.StringIO()
+    with redirect_stdout(buf2):
+        p2.render(base_info(action="监视中"))       # 内容未变
+    ok(buf2.getvalue() == "", "内容未变时不重复输出", repr(buf2.getvalue()))
+
+    print("\n=== ANSI 定点重绘 ===")
+
+    class FakeTTY:
+        def __init__(self):
+            self.buf = []
+
+        def write(self, s):
+            self.buf.append(s)
+
+        def flush(self):
+            pass
+
+        def isatty(self):
+            return True
+
+        def reconfigure(self, **kw):
+            pass
+
+    fake = FakeTTY()
+    orig_stdout, orig_ansi = sys.stdout, W._enable_ansi
+    W._enable_ansi = lambda: True
+    sys.stdout = fake
+    try:
+        p3 = W.Panel(W.Term(plain=False))
+        p3.render(base_info(action="第一步"))
+        first = "".join(fake.buf)
+        fake.buf.clear()
+        p3.render(base_info(action="第一步"))       # 完全没变
+        same = "".join(fake.buf)
+        fake.buf.clear()
+        p3.render(base_info(action="第二步"))       # 只变一行
+        diff = "".join(fake.buf)
+    finally:
+        sys.stdout = orig_stdout
+        W._enable_ansi = orig_ansi
+
+    ok("\033[" in first, "ANSI 模式输出转义序列")
+    ok("\033[1;1H" in first, "首行定位到 1,1")
+    ok("第一步" in first, "动作文本进入输出")
+    ok(same.count("│") == 0, "未变化时不重画任何行", repr(same[:40]))
+    ok("第二步" in diff, "变化时画出新内容")
+    ok(diff.count("微助教自动签到") == 0, "只重画变化的行，标题不重画", repr(diff[:60]))
+
+    print("\n%d 通过，%d 失败" % (PASS, FAIL))
+    return 0 if FAIL == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
