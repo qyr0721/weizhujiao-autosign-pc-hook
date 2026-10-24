@@ -77,7 +77,7 @@ def has_sign_tab(targets):
                and t.get("type") in ("page", "webview") for t in targets)
 
 
-async def run(args, log):
+async def run(args, log, force_check=None):
     sup = ck.ProxySupervisor(args.wmpf_dir, args.node)
 
     if not port_open_or_spawn(sup, log):
@@ -105,6 +105,9 @@ async def run(args, log):
 
         # 签到侧监督：它只在 401 时才退出（code=2），此时立刻续号
         force = False
+        if force_check is not None and force_check():
+            force = True
+            log("签到侧报告号已失效，立刻续号（跳过冷却）")
         if signer is not None and signer.poll() is not None:
             rc = signer.returncode
             force = (rc == 2)

@@ -32,3 +32,8 @@ desktop.ini
 # 签到侧本地配置与状态
 signer/config.json
 openid.stale
+
+# 构建产物
+build/
+dist/
+*.spec
