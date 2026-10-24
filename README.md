@@ -260,7 +260,7 @@ python tools/pe_scan.py "<路径>\flue.dll" \
 
 ## 其他项目
 
-- **Android root版**：[qyr0721/weizhujiao-autosign-android](https://github.com/qyr0721/weizhujiao-autosign)（MIT）
+- **Android root版**：[qyr0721/weizhujiao-autosign-android](https://github.com/qyr0721/weizhujiao-autosign-android)（MIT）
   Magisk / KernelSU 模块，走 root 静默授权 + 读 Cookie 库取号。签到接口契约与本文一致。
 
 ---
@@ -276,5 +276,3 @@ python tools/pe_scan.py "<路径>\flue.dll" \
   **GPL-2.0-only**；其 `src/third-party` 版权归腾讯所有。
 - 上游与贡献者：**evi0s/WMPFDebugger** 及其所有贡献者。
 - 请勿用于违反所在学校/机构规定的用途。
-
-  

@@ -3,7 +3,7 @@
 """
 signcore.py — 签到核心（被 signer/sign_pc.py 与 wizard.py 共用）
 
-契约与 Android 版（weizhujiao-autosign）一致：
+契约与 Android root 版（weizhujiao-autosign-android）一致：
   GET  {base}/student/active_signs      headers: UA / Referer / openId
   POST {base}/student-sign-in           {"courseId":N,"signId":N[,"lat":x,"lon":y]}
   幂等：含 "signRank" 成功；"repeat sign in" / "已经签到" / errorCode 305 视为已签
