@@ -19,6 +19,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import wizard as W  # noqa: E402
+import uikit as U    # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -49,30 +50,30 @@ def base_info(**kw):
 
 
 def main():
-    term = W.Term(plain=True)
+    term = U.Term(plain=True)
     panel = W.Panel(term)
 
     print("=== 宽度工具 ===")
-    ok(W.dwidth("abc") == 3, "ASCII 宽度")
-    ok(W.dwidth("中文") == 4, "中文按 2 列")
-    ok(W.dwidth("a中b") == 4, "混排宽度")
-    ok(W.dwidth(W.fit("短", 10)) == 10, "fit 补齐到指定宽度")
-    ok(W.dwidth(W.fit("超长文本" * 30, 20)) == 20, "fit 截断后宽度不变")
-    ok("..." in W.fit("超长文本" * 30, 20), "截断处有 ASCII 省略标记")
+    ok(U.dwidth("abc") == 3, "ASCII 宽度")
+    ok(U.dwidth("中文") == 4, "中文按 2 列")
+    ok(U.dwidth("a中b") == 4, "混排宽度")
+    ok(U.dwidth(U.fit("短", 10)) == 10, "fit 补齐到指定宽度")
+    ok(U.dwidth(U.fit("超长文本" * 30, 20)) == 20, "fit 截断后宽度不变")
+    ok("..." in U.fit("超长文本" * 30, 20), "截断处有 ASCII 省略标记")
 
     print("\n=== 布局对齐 ===")
     rows = panel.compose(base_info())
     box = rows[0:5]                      # 标题框：唯一带右边框的区域
-    widths = {W.dwidth(r) for r in box}
+    widths = {U.dwidth(r) for r in box}
     ok(len(widths) == 1, "标题框所有行同宽（%s）" % widths, str(sorted(widths)))
-    ok(widths == {W.TOTAL}, "宽度等于 TOTAL=%d" % W.TOTAL, str(widths))
+    ok(widths == {(W.INNER + 2)}, "宽度等于 TOTAL=%d" % (W.INNER + 2), str(widths))
     ok(box[0].startswith("┌") and box[-1].startswith("└"), "标题框上下边框正确")
     ok(all(r.startswith("│") and r.endswith("│") for r in box[1:4]), "标题框左右边框闭合")
 
     long_info = base_info(action="正在取号…" + "很长" * 60,
                           sign="12:34:56 签到成功 " + "x" * 100)
     rows2 = panel.compose(long_info)
-    ok({W.dwidth(r) for r in rows2[0:5]} == {W.TOTAL}, "超长内容不影响标题框对齐")
+    ok({U.dwidth(r) for r in rows2[0:5]} == {(W.INNER + 2)}, "超长内容不影响标题框对齐")
 
     print("\n=== 状态机：日志 → 面板 ===")
     st = W.State(base_info())
@@ -122,7 +123,7 @@ def main():
     from contextlib import redirect_stdout
     buf = io.StringIO()
     with redirect_stdout(buf):
-        p2 = W.Panel(W.Term(plain=True))
+        p2 = W.Panel(U.Term(plain=True))
         p2.render(base_info(action="监视中"))
     out = buf.getvalue()
     ok("│" not in out and "╭" not in out, "plain 模式不输出框线", repr(out[:40]))
@@ -152,11 +153,11 @@ def main():
             pass
 
     fake = FakeTTY()
-    orig_stdout, orig_ansi = sys.stdout, W._enable_ansi
-    W._enable_ansi = lambda: True
+    orig_stdout, orig_ansi = sys.stdout, U.enable_ansi
+    U.enable_ansi = lambda title="": True
     sys.stdout = fake
     try:
-        p3 = W.Panel(W.Term(plain=False))
+        p3 = W.Panel(U.Term(plain=False))
         p3.render(base_info(action="第一步"))
         first = "".join(fake.buf)
         fake.buf.clear()
@@ -167,7 +168,7 @@ def main():
         diff = "".join(fake.buf)
     finally:
         sys.stdout = orig_stdout
-        W._enable_ansi = orig_ansi
+        U.enable_ansi = orig_ansi
 
     ok("\033[" in first, "ANSI 模式输出转义序列")
     ok("\033[1;1H" in first, "首行定位到 1,1")

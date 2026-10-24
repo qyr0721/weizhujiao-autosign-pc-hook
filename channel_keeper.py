@@ -70,6 +70,20 @@ def ts():
     return time.strftime("%H:%M:%S")
 
 
+def find_wmpf_versions():
+    """本机已落地的 WMPF 运行时版本（目录名即版本号）。"""
+    root = os.path.join(os.environ.get("APPDATA", ""), "Tencent", "xwechat",
+                        "xplugin", "plugins", "RadiumWMPF")
+    if not os.path.isdir(root):
+        return []
+    out = []
+    for name in os.listdir(root):
+        dll = os.path.join(root, name, "extracted", "runtime", "flue.dll")
+        if name.isdigit() and os.path.isfile(dll):
+            out.append(int(name))
+    return sorted(out)
+
+
 # 外部可注入的输出口：面板模式（wizard/exe）把它接到日志文件，
 # 避免调试信息打乱界面。默认仍然是直接打印。
 OUT = None
@@ -98,10 +112,27 @@ class ProxySupervisor:
     def __init__(self, wmpf_dir, node, extra_args=None):
         self.wmpf_dir = wmpf_dir
         self.node = node
-        self.extra = extra_args or []
+        self.extra = list(extra_args or [])
+        # 兜底：WMPFDebugger 仓库自带配置只到旧版本，本机这个版本没有配置时
+        # 必须加 --auto-detect，否则 frida 直接报 "version config not found"。
+        if "--auto-detect" not in self.extra and self._need_autodetect():
+            self.extra.append("--auto-detect")
         self.proc = None
         self.restarts = 0
         self.reported = False
+
+    def _need_autodetect(self):
+        """本机 WMPF 版本没有对应偏移配置 → 需要 --auto-detect。"""
+        try:
+            vers = find_wmpf_versions()
+            if not vers:
+                return False
+            cfg_dir = os.path.join(self.wmpf_dir, "frida", "config",
+                                   "win32" if sys.platform == "win32" else sys.platform)
+            return not any(os.path.isfile(os.path.join(cfg_dir, "addresses.%d.json" % v))
+                           for v in vers)
+        except Exception:  # noqa: BLE001
+            return False
 
     def ensure(self):
         if port_open(CDP_PORT):

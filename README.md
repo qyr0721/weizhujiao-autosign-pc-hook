@@ -107,17 +107,48 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 
 ## 快速开始
 
-### 前置
+### 前置：exe 之外还缺什么
 
-| 项 | 说明 |
+`wxsign.exe` 自带 Python 运行时，**不需要装 Python**。但它要调 WMPFDebugger 去 hook 微信，
+那个东西是 Node 写的，所以还需要 Node 和它的一堆依赖：
+
+| 项 | 谁提供 |
 |---|---|
-| 系统 | Windows x64 |
-| 微信 | **4.1.15.56**（WMPF 25799），并关闭自动更新 |
-| Python | 3.10+，`pip install websockets`（仅源码运行需要） |
-| Node | 22+，用于跑 WMPFDebugger |
-| 上游 | 单独 clone [WMPFDebugger](https://github.com/evi0s/WMPFDebugger) 并按它的 README 装 frida 绑定 |
+| 系统 | Windows x64（你本来就有） |
+| 微信 **4.1.15.56** | 你装（Release 附件有安装包），并关闭自动更新 |
+| Node 22+ | **`wxsign-setup.exe` 自动装**（便携版，只落在程序目录，不进系统） |
+| WMPFDebugger + tsx + frida | **`wxsign-setup.exe` 自动装** |
+| Python 3.10+ | 只有**源码运行**才需要，exe 不用 |
 
-路径可用环境变量覆盖，不必和作者机器一致：
+### 第一次使用：先跑环境安装器
+
+```
+1. wxsign-setup.exe     ← 自动补齐 Node + WMPFDebugger + 依赖
+2. wxsign.exe           ← 装好后再跑这个
+```
+
+`wxsign-setup.exe` 只补缺的，**已有的绝不覆盖**，装的东西全在它自己目录下（`runtime\node`、
+`WMPFDebugger`），不写注册表、不改 PATH、不动系统环境。
+
+四步：
+
+```
+Node 运行时     下载便携版 zip 解压到 runtime\node（不装进系统）
+WMPFDebugger    git clone，没有 git 就用 codeload zip
+依赖 tsx/frida  npm install（frida 会拉预编译绑定，约 130 MB）
+偏移配置        跑一次 --auto-detect 探测出来，写进 frida\config\win32\
+```
+
+> **偏移配置这一步要求微信在运行**（要 attach 上去扫）。如果当时微信没开，
+> 这一步会失败——开好微信重跑一次就行；`wxsign.exe` 也会在缺配置时自动加 `--auto-detect` 兜底。
+
+它也支持：
+
+```bat
+wxsign-setup.exe --check      只看缺什么，不安装
+```
+
+路径仍可用环境变量覆盖（想用系统已有的安装）：
 
 ```bash
 set WZ_WMPF_DIR=D:\tools\WMPFDebugger
@@ -126,15 +157,22 @@ set WZ_NODE=C:\Program Files\nodejs\node.exe
 
 ### 如何使用
 
-**方式一：下载打包好的 exe（推荐给不想装 Python 的人）**
+**方式一：两个 exe（推荐，不装 Python）**
 
-到 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载 `wxsign.exe`，双击即可。
-它只做三件事：自检、起代理、告诉你现在在干什么。
+到 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载
+`wxsign-setup.exe` 和 `wxsign.exe`，放进**同一个目录**：
+
+```
+先双击 wxsign-setup.exe     装环境（只需一次）
+再双击 wxsign.exe           开始签到
+```
+
+`wxsign.exe` 只做三件事：自检、起代理、告诉你现在在干什么。
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  微助教自动签到                                          │
-│  v1.1   by qyr0721                                       │
+│  v1.2   by qyr0721                                       │
 │  github.com/qyr0721/weizhujiao-autosign-pc-hook          │
 └──────────────────────────────────────────────────────────┘
 
@@ -155,13 +193,6 @@ set WZ_NODE=C:\Program Files\nodejs\node.exe
   日志  logs\wxsign-20261025-0258.log
   Ctrl+C 退出，不影响正在运行的小程序
 ```
-
-面板上只有这些：程序名 / 作者 / 项目地址 / 微信版本 / 自检 / **现在在做什么** / **签到成功了没有**。
-其余细节（代理、frida、CDP、每次请求）**全部写日志文件**，不打在界面上。
-
-> 详细诊断信息在 `wxsign.exe` 同目录的 `logs\wxsign-<时间>.log`。
-> 程序目录不可写时退到 `%LOCALAPPDATA%\wxsign\logs`。
-> 只想自检：`wxsign.exe --check`；不想重绘（重定向到文件）：`wxsign.exe --plain`。
 
 > exe 只含调度与签到逻辑，**不含** WMPFDebugger 与微信安装包（后者在 Release 附件里）。
 
@@ -212,6 +243,8 @@ WMPF 的调试通道只在**小程序启动那一刻**建立（hook 打在 `Appl
 |---|---|
 | `run.py` / `start.bat` | 一键入口：代理 + 通道 + 续号 + 拉起签到侧 |
 | `wizard.py` | 引导式启动器（`wxsign.exe` 的源码） |
+| `setup.py` | 环境安装器（`wxsign-setup.exe` 的源码） |
+| `uikit.py` | 两个 exe 共用的终端渲染与系统探测 |
 | `signcore.py` | 签到核心（轮询 / 提交 / 幂等 / GPS / 空窗退避） |
 | `signer/sign_pc.py` | 签到 CLI（`signcore` 的薄壳） |
 | `get_openid.py` | 续号核心：多策略触发（S0/S3/S1/S2）+ 落点捕获 |
