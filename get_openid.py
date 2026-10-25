@@ -125,8 +125,9 @@ def pick_tab(targets, prefer_sign=False):
     if h5:
         h5.sort(key=lambda t: len(t.get("url") or ""), reverse=True)
         return h5[0], "plain-h5"
-    if pages:
-        return pages[0], "fallback"
+    # 不能退回 weixin://resourceid 这类内部页：EXCLUDE 已点名排除，
+    # 它们导航不到授权链接，选中等于白跑一轮三个策略（实测 54s 后 all-failed）。
+    # 宁可返回 None 让调用方去新建页面，也不要假装选中了可用标签页。
     return None, "none"
 
 
@@ -136,6 +137,25 @@ def scan_targets_for_oid(targets, exclude=""):
         if m and m.group(1) != exclude:
             return m.group(1), t.get("url")
     return None, None
+
+
+async def create_tab(cdp, url, log):
+    """没有可导航页面时，用 CDP 新建一页直接放授权链接。
+
+    全新的微信账号往往只有 weixin:// 内部页（pick_tab 会拒收），
+    这时必须自己开一页，否则取号无从下手。
+    """
+    try:
+        res = await cdp.send("Target.createTarget", {"url": url}, timeout=15)
+        tid = (res or {}).get("targetId")
+        if not tid:
+            log("  新建页面失败：无 targetId")
+            return None, "none"
+        log("  已新建页面用于取号：%s" % str(tid)[:12])
+        return {"targetId": tid, "url": url}, "created"
+    except Exception as exc:  # noqa: BLE001
+        log("  新建页面失败：%s" % str(exc)[:120])
+        return None, "none"
 
 
 async def one_attempt(args, log):
@@ -169,7 +189,12 @@ async def one_attempt(args, log):
                 return cand, "S0-already"
 
         tab, why = pick_tab(infos, prefer_sign=args.from_sign)
+        created = False
         if not tab:
+            tab, why = await create_tab(cdp, args.url, log)
+            created = bool(tab)
+        if not tab:
+            log("  没有可导航的页面，也没能新建。请在微信里打开「微助教」小程序后重试")
             return None, "no-tab"
         log("选中标签页(%s)：%s" % (why, (tab.get("url") or "")[:90]))
 
@@ -210,6 +235,11 @@ async def one_attempt(args, log):
         strategies.sort(key=lambda kv: {"S3-Page.navigate": 0,
                                         "S1-location.href": 1,
                                         "S2-openUrlWithExtra": 2}.get(kv[0], 9))
+
+        if created:
+            # createTarget 建页时已经带着授权链接发起导航，不必再触发，
+            # 直接进观察窗口等它跳到带 openid 的地址。
+            strategies = [("S4-createTarget", lambda: asyncio.sleep(0))]
 
         for name, act in strategies:
             log("尝试 %s ..." % name)
