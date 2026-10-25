@@ -243,6 +243,33 @@ def test_no_30s_after_spawn():
        "等待通道期间探测统一用短超时 2s %s" % timeouts, str(timeouts))
 
 
+def test_pick_tab_rejects_internal_pages():
+    """全新微信账号里往往只有 weixin:// 内部页，它们导航不到授权链接。
+
+    实测（另一台机器的 wxsign-20261025-170823.log）：fallback 选中
+    weixin://resourceid/... 后 S1/S2/S3 全部打空，54s 后 all-failed。
+    现在必须拒收，返回 None 让调用方去新建页面。
+    """
+    internal = [{"targetId": "t1", "type": "page",
+                 "url": "weixin://resourceid/SubscriptionDisorder/disorder.html?visible=0"}]
+    tab, why = g.pick_tab(list(internal))
+    ok(tab is None, "拒收 weixin:// 内部页（不许 fallback）", "%s %s" % (tab, why))
+
+    mixed = internal + [{"targetId": "t2", "type": "webview",
+                         "url": "https://app.teachermate.com.cn/wechat-pro-ssr/student/sign"}]
+    tab, why = g.pick_tab(list(mixed))
+    ok(tab is not None and tab["targetId"] == "t2",
+       "有 http 页时优先选它", "%s %s" % (tab, why))
+
+    tm = [{"targetId": "t3", "type": "page",
+           "url": "https://app.teachermate.com.cn/wechat-pro-ssr/student/sign?x=1"}]
+    tab, why = g.pick_tab(tm + mixed)
+    ok(tab is not None and tab["targetId"] == "t3",
+       "teachermate 页优先级最高", "%s %s" % (tab, why))
+
+    ok(g.pick_tab([])[0] is None, "无页面时返回 None", str(g.pick_tab([])))
+
+
 def test_panel_mapping():
     """日志 → 面板状态：这两条决定了用户看到什么。"""
     st = W.State({"wechat": "4.1.15.56", "wmpf": "25799", "wmpf_ok": True,
@@ -263,6 +290,7 @@ def main():
     test_no_idle_wait_after_new_oid()
     test_no_30s_after_spawn()
     test_oid_state_off_eventloop()
+    test_pick_tab_rejects_internal_pages()
     test_panel_mapping()
     print("\n  %d 通过，%d 失败" % (PASS, FAIL))
     if os.path.exists(OUT):
