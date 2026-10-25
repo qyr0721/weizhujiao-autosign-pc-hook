@@ -348,7 +348,7 @@ def auto_setup(log, state, panel, term):
 
 
 # ================================================================ 偏移配置补全
-def _ensure_offsets_once(log, state, panel, wmpf_dir):
+def _ensure_offsets_once(log, state, panel, wmpf_dir, node):
     """缺偏移配置就补一次（非致命）。
 
     仓库自带的配置只覆盖旧版本；本机 WMPF 25799 没有配置时，代理会带
@@ -359,6 +359,7 @@ def _ensure_offsets_once(log, state, panel, wmpf_dir):
         st = installer.Setup(log, HERE, notify=lambda a, p="": None)
         st.wmpf_dir = wmpf_dir
         st.wmpf = str(U.find_wmpf_versions()[-1]) if U.find_wmpf_versions() else "未检测到"
+        st.node = node                      # 不设这个，join(cmd) 会炸在 None
         cfg = st._offset_path()
         if not cfg or os.path.isfile(cfg):
             return
@@ -446,7 +447,7 @@ def main():
     # 每次启动都要 --auto-detect（注入多等约 12 秒）。
     # 这里只要配置缺失就单独补一次，失败不阻塞启动。
     if not args.no_setup and wmpf_dir and node:
-        _ensure_offsets_once(log, state, panel, wmpf_dir)
+        _ensure_offsets_once(log, state, panel, wmpf_dir, node)
 
     state.set_action("启动签到服务…")
     panel.render(state.snapshot())
