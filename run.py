@@ -144,7 +144,8 @@ async def run(args, log, force_check=None):
 
         # 通道可用
         cur = g.current_oid(args.out)
-        st = g.oid_state(cur) if cur else "none"
+        # oid_state 是同步 HTTP，直接调用会卡住事件循环（挡住 CDP 与面板刷新）
+        st = (await g.oid_state_async(cur)) if cur else "none"
 
         if cur and st != "401" and not force:
             if signer is None and args.with_sign:
@@ -194,6 +195,10 @@ async def run(args, log, force_check=None):
 
         if args.once:
             return 0 if oid else 4
+        # 刚换到新号：立刻回循环顶部刷新，不再空等一个轮询周期。
+        # 下一圈 openid 有效，会直接打出「正常值守」，面板随即进入「监视中」。
+        if oid:
+            continue
         await asyncio.sleep(args.poll)
 
 
