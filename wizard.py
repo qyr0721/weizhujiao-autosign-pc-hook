@@ -222,8 +222,6 @@ class State:
             self.set_action("查询失败，重试中…")
         elif "还没有 openid" in m:
             self.set_action("等待取号…")
-        elif "空窗" in m:
-            self.set_action("监视中（暂时没有签到，30 秒一次）")
         else:
             return False
         return True
