@@ -200,7 +200,7 @@ async def run(args, log, force_check=None):
             if args.with_sign and signer is None:
                 signer = start_signer(args, log)
         else:
-            log("  ✘ 本轮失败（%s），%ds 后重试" % (how, int(args.cooldown)))
+            log("  ✘ 本轮失败（%s），%ds 后重试" % (how, int(args.poll)))
 
         if args.once:
             return 0 if oid else 4
@@ -241,7 +241,8 @@ def main():
     ap.add_argument("--url", default=g.DEFAULT_URL)
     ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
     ap.add_argument("--poll", type=float, default=10.0)
-    ap.add_argument("--cooldown", type=float, default=15.0)
+    ap.add_argument("--cooldown", type=float, default=0.0,
+                    help="取号冷却秒数。0 = 不冷却，失效后立即取号")
     ap.add_argument("--observe", type=float, default=18.0)
     ap.add_argument("--check", action="store_true", help="只看状态")
     ap.add_argument("--once", action="store_true", help="跑一轮就退出（不常驻）")
