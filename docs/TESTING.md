@@ -3,20 +3,21 @@
 离线能测的都测了；需要真微信的部分单独列出，不外推。
 
 ```bash
-python test/run_all.py       # 4 套一起跑
+python test/run_all.py       # 5 套一起跑
 ```
 
 ```
 mux        PASS   8 条   CDP 代理多客户端复用
 classify   PASS  12 条   授权触发判定 + URL 构造
-signcore   PASS  14 条   签到核心行为契约
+signcore   PASS  13 条   签到核心行为契约
 ui         PASS  39 条   面板布局对齐 / 日志→状态映射 / ANSI 定点重绘
-4/4 套通过（73 条断言）
+setup      PASS  18 条   安装器：zip slip 防护 / 解码 / 失败识别
+5/5 套通过（90 条断言）
 ```
 
 ---
 
-## 1. 三套各测什么
+## 1. 各套分别测什么
 
 ### mux（`test/mux_test.ts`）— 需要 `tsx`
 
@@ -46,8 +47,8 @@ ui         PASS  39 条   面板布局对齐 / 日志→状态映射 / ANSI 定�
 
 对应 `signcore.py`，用假 `req` 驱动真循环：
 
-- 结构上无 `in_hours` / `class_hours`（时段闸门已移除）
-- 起步用 `poll`，连续空窗后降到 `idle_poll`，一有签到立刻恢复 `poll`
+- 结构上无 `in_hours` / `class_hours`（时段闸门已移除），也无 `idle_poll` / `idle_after`（空闲退避已移除）
+- 轮询间隔恒为 `poll`：无论是否有进行中的签到，实测间隔一致
 - 提交体 `{courseId, signId}` 与契约一致；同一 `signId` 只提交一次
 - `repeat sign in` / `errorCode 305` 视为已签
 - `401` → 返回码 2 + 写 `openid.stale`（触发续号）
@@ -95,4 +96,4 @@ ui         PASS  39 条   面板布局对齐 / 日志→状态映射 / ANSI 定�
 ## 4. 已知的假警报
 
 曾有一次测试「失败」是因为跑在凌晨，被 `classHours=[7,23)` 正确拦住——
-是测试环境问题，不是产品问题。该闸门现已移除（改为空窗退避，不看时钟）。
+是测试环境问题，不是产品问题。该时段闸门现已移除，轮询间隔固定为 `poll`，不受本地时间影响。
