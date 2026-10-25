@@ -96,6 +96,7 @@ async def run(args, log, force_check=None):
     last_beat = 0.0
     last_try = 0.0
     ticks = 0
+    prev_state = None
     signer = None
     if args.with_sign:
         signer = start_signer(args, log)
@@ -115,16 +116,22 @@ async def run(args, log, force_check=None):
             signer = None
 
         try:
-            state, targets, why = await ck.probe_channel()
+            # 通道不通时探测会吃满 timeout（mux 不响应），此时用短超时快速判定
+            # 「还没连上」；通道通时保持长超时，避免误判成断连。
+            state, targets, why = await ck.probe_channel(
+                timeout=6.0 if prev_state == ck.CHANNEL_UP else 2.0)
         except Exception as exc:  # noqa: BLE001
             log("探测异常：%s" % exc)
             state, targets, why = ck.CHANNEL_DOWN, [], "probe-error"
+        prev_state = state
 
         if state == ck.PROXY_DOWN:
             log("代理没在监听（%s），尝试拉起..." % why)
             if not port_open_or_spawn(sup, log):
                 log("代理起不来，30s 后重试")
-            await asyncio.sleep(30)
+                await asyncio.sleep(30)
+            # 拉起成功就立刻重探。30s 是「起不来」时的退避，不是成功后的固定间隔；
+            # 写在分支外面会让每次冷启动都白等 30s（实测到「等待小程序连接」要 37s）。
             continue
 
         if state == ck.CHANNEL_DOWN:
@@ -139,7 +146,9 @@ async def run(args, log, force_check=None):
                 signer = start_signer(args, log)
             if args.once:
                 return 2
-            await asyncio.sleep(args.poll)
+            # 通道不通时轮询要勤快：10s 间隔会让「小程序连上」到「面板切换」
+            # 白等最多一个周期（实测 8s）。断连期间用短间隔，连上后回到 poll。
+            await asyncio.sleep(min(args.poll, 2.0))
             continue
 
         # 通道可用
