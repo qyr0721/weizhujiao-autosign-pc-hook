@@ -10,7 +10,7 @@ run_all.py — 一次性跑完所有可离线执行的测试
   2. classify  授权触发判定 + URL 构造（纯函数）                    [纯 python]
   3. signcore  签到核心契约：固定间隔轮询 / 幂等 / 401               [纯 python]
   4. ui        面板布局对齐 / 日志→状态映射 / ANSI 定点重绘          [纯 python]
-  5. setup     安装器：zip slip 防护 / 解码 / 失败识别               [纯 python]
+  5. installer 环境部署：zip slip 防护 / 解码 / 失败识别             [纯 python]
 
 不包含需要真实微信通道的部分（那需要一台装着微信的机器）。
 """
@@ -51,7 +51,7 @@ def main():
     results.append(("classify", run("classify_test", [sys.executable, "test/classify_test.py"], ROOT)))
     results.append(("signcore", run("signcore_test", [sys.executable, "test/signcore_test.py"], ROOT)))
     results.append(("ui", run("ui_test", [sys.executable, "test/ui_test.py"], ROOT)))
-    results.append(("setup", run("setup_test", [sys.executable, "test/setup_test.py"], ROOT)))
+    results.append(("installer", run("installer_test", [sys.executable, "test/installer_test.py"], ROOT)))
 
     print("\n================ 汇总 ================")
     bad = 0
