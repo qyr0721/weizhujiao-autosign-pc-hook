@@ -218,7 +218,7 @@ class State:
         elif "本轮失败" in m:
             self.set_action("取号失败，稍后重试")
         elif "冷却中" in m:
-            self.set_action("取号冷却中（防止被限流）")
+            self.set_action("取号冷却 15s…")
         elif "签到侧退出" in m:
             self.set_action("签到服务重启中…")
         elif "启动签到侧" in m or "签到侧已启动" in m:
@@ -464,7 +464,7 @@ def main():
         log.write("只取号模式（--no-sign）")
 
     ns = argparse.Namespace(
-        url=args.url, out=args.out, poll=10.0, cooldown=300.0, observe=18.0,
+        url=args.url, out=args.out, poll=10.0, cooldown=15.0, observe=18.0,
         check=False, once=False, with_sign=False,
         wmpf_dir=wmpf_dir, node=node,
     )
