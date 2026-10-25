@@ -1,178 +1,178 @@
 # 微助教自动签到（PC / 微信内置浏览器）
 
-> Windows 上把微助教课堂签到做成全自动：**自动续号 → 5 秒轮询 → 命中即提交**。
-> 不点菜单、不截图、不模拟鼠标。号失效了自己换，换完自己接着签。
+本项目在 Windows 平台实现微助教课堂签到的自动化：自动获取凭证、轮询签到任务并提交结果。
+全过程无需人工点击、屏幕截图或鼠标模拟；凭证失效时自动重新获取并继续运行。
 
 ---
 
-## 特性
+## 功能
 
 | 能力 | 说明 |
 |---|---|
-| **自动签到** | 5 秒轮询 `active_signs`，命中立刻 POST，通常 5 秒内完成 |
-| **自动续号** | openid 失效（401）时自动用签到页换一个新的，全程后台，无需人工 |
-| **幂等** | `repeat sign in` / `已经签到` / `errorCode 305` 一律视为已签，不重复提交 |
-| **多课程** | 接口返回哪门课就签哪门，不用配课程号 |
-| **GPS 签到** | `isGPS` 为真时按 `jitter_deg` 抖动提交经纬度 |
-| **空窗降频** | 没有课时降到 30 秒一次探活，一有签到立刻回到 5 秒（不看本地时钟） |
-| **自愈** | 签到侧一退出就续号并拉起，`run.py` 常驻监督 |
+| 自动签到 | 以 5 秒间隔轮询 `active_signs`，发现进行中的签到立即提交 |
+| 自动续期凭证 | openid 失效（HTTP 401）时自动重新获取，全程在后台完成 |
+| 幂等提交 | `repeat sign in` / `已经签到` / `errorCode 305` 均判定为已签到，不重复提交 |
+| 多课程 | 依据接口返回内容处理，无需预先配置课程标识 |
+| GPS 签到 | `isGPS` 为真时按 `jitter_deg` 对经纬度施加抖动后提交 |
+| 空闲降频 | 无进行中签到时轮询间隔降为 30 秒，出现签到后恢复 5 秒；判定依据为服务端返回，不依赖本地时间 |
+| 进程自愈 | 签到进程异常退出后由主循环重新获取凭证并拉起 |
 
 ---
 
-## 为什么需要 hook 微信
+## 实现原理
 
-签到本身只需要**一个有效的 openid**：
+签到接口仅依赖一个有效的 openid：
 
 ```
-GET  /wechat-api/v1/class-attendance/student/active_signs   （带 openId 头）
+GET  /wechat-api/v1/class-attendance/student/active_signs   （请求头携带 openId）
 POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"signId":..}
 ```
 
-但 openid 只能由微信客户端在 OAuth 回调里签发。直接请求授权链接没有用——实测
-`open.weixin.qq.com/connect/oauth2/authorize` 对**任何 UA**（PC 微信 / 手机微信 / 普通 Chrome）
-都返回同一份 1 KB 空壳，真正的授权发生在**客户端原生层**。
+该 openid 由微信客户端在 OAuth 回调过程中签发，无法通过普通 HTTP 请求获得。实测表明，
+以任意 User-Agent（PC 微信、手机微信、Chrome）请求
+`open.weixin.qq.com/connect/oauth2/authorize`，服务端均返回同一份约 1 KB 的占位页面，
+且不产生 302 跳转；真正的授权流程发生在客户端原生层。
 
-所以 hook 的唯一目的，是让微信内置浏览器**在后台自己走一次授权**，从而拿到新号：
+因此，本项目的 hook 仅用于使微信内置浏览器在后台完成一次授权，从而取得新的 openid：
 
 ```
 [触发]  CDP Page.navigate -> open.weixin.qq.com/connect/oauth2/authorize?appid=..&redirect_uri=..
-[接管]  A8KeyNavigationThrottle::CheckURL -> A8KeyRateLimiter -> ::Redirect   （微信自己的导航拦截层）
+[接管]  A8KeyNavigationThrottle::CheckURL -> A8KeyRateLimiter -> ::Redirect（微信内置导航拦截层）
 [授权]  原生层完成授权，302 -> v18.teachermate.cn/api/v1/wechat/r?code=..
 [落地]  302 -> v18.teachermate.cn/wechat-pro-ssr/student/sign?openid=<32hex>
-[取号]  读这个 URL 的 openid -> 交给签到侧
+[取号]  解析目标 URL 中的 openid，交由签到模块使用
 ```
 
-细节与实测证据见 [`docs/DESIGN.md`](docs/DESIGN.md)。
-调试通道来自 [evi0s/WMPFDebugger](https://github.com/evi0s/WMPFDebugger)（frida hook `flue.dll`），
-本仓库是它的下游应用，并附了一个多客户端复用补丁。
+机制细节与实测数据见 [`docs/DESIGN.md`](docs/DESIGN.md)。
+调试通道基于 [evi0s/WMPFDebugger](https://github.com/evi0s/WMPFDebugger)（通过 frida hook `flue.dll`），
+本项目为其下游应用，并附带一个多客户端复用补丁。
 
 ---
 
 ## 工作流程
 
 ```
-双击 start.bat
+运行 start.bat
   │
-  ├─ 代理守护          确保 WMPFDebugger 在跑（9421 / 62000），已在跑就复用
-  ├─ 通道守护          微信里得有一个小程序连着（见下）
+  ├─ 代理守护        确保 WMPFDebugger 运行并监听 9421 / 62000，已运行则复用
+  ├─ 通道守护        检测小程序是否已连接调试通道
   │
-  ├─ 签到侧（常驻）    signer/sign_pc.py
-  │     └─ 每 5s GET active_signs
-  │          命中 → POST student-sign-in → 记下 signId（幂等）
-  │          401  → 写 openid.stale 并退出（exit 2）
+  ├─ 签到模块（常驻）signer/sign_pc.py
+  │     └─ 每 5 秒请求 active_signs
+  │          发现签到 → POST student-sign-in → 记录 signId（幂等）
+  │          返回 401 → 写入 openid.stale 并以退出码 2 结束
   │
-  └─ 续号（按需）      run.py 看到 exit 2 → 立刻续号 → 重启签到侧
-                       （只在「没号」或「号 401」时动手，绝不乱续）
+  └─ 凭证续期（按需）主循环捕获退出码 2 后立即重新获取凭证并重启签到模块
 ```
 
 ---
 
-## 微信版本：必须锁在 4.1.15.56
+## 微信版本要求
 
-**hook 里的 RVA 偏移是按 WMPF 运行时 `25799` 扫出来的，与微信版本死绑。**
+hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版本严格绑定。
 
-| 项 | 值 |
+| 项目 | 值 |
 |---|---|
 | 微信 PC | **4.1.15.56** |
 | WMPF 运行时 | **25799** |
-| 安装包 | [`WeChatWin_4.1.15.exe`](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases/latest)（Release 附件，245 MB） |
+| 安装包 | [`WeChatWin_4.1.15.exe`](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases/latest)（发布页附件，245 MB） |
 | 安装包 sha256 | `4422bad98617dd095005c7879b2190f188ffa9ad6abf79e075358cf981a3d9e4` |
 
-`wxsign.exe --check` 会直接读你机器上的实际版本并对照，不一致就告警。
+`wxsign.exe --check` 会读取本机实际版本并与上述值比对，不一致时给出提示。
 
-### 装完之后：关闭自动更新（重要）
+### 关闭微信自动更新
 
-微信一升级，WMPF 版本就变，`flue.dll` 里的函数偏移全部失效 —— 轻则取号失败，
-重则 `Interceptor.replace` 打在错位地址上，**直接把浏览器进程打崩**。所以务必锁版本。
+微信升级会导致 WMPF 版本变化，使 `flue.dll` 中的函数偏移失效。轻则无法获取凭证，
+重则 `Interceptor.replace` 写入错位地址并导致浏览器进程崩溃。因此应锁定版本。
 
-**方法一（推荐，设置里关）**
-
-```
-微信左下角「≡」（三条横线）→ 设置 → 通用（通用设置）
-  → 找到「有更新时自动升级微信」→ 取消勾选
-```
-
-**方法二（加固，改文件名）**
+**方式一：通过设置关闭**
 
 ```
-打开微信安装目录（微信快捷方式右键 → 打开文件所在位置）
-  → 进入版本号子目录，例如 4.1.15.56
-  → 把 WeixinUpdate.exe 改名为 WeixinUpdate.exe.bak
+微信左下角菜单（≡）→ 设置 → 通用（通用设置）
+  → 取消勾选「有更新时自动升级微信」
 ```
 
-> 升级后确实想继续用：先用 `tools/pe_scan.py` 重扫 `flue.dll` 拿新 RVA
-> （见「版本适配」），再更新 `tools/hook_a8key.js`。
+**方式二：重命名更新程序**
+
+```
+打开微信安装目录（快捷方式 → 右键 → 打开文件所在位置）
+  → 进入版本子目录，例如 4.1.15.56
+  → 将 WeixinUpdate.exe 重命名为 WeixinUpdate.exe.bak
+```
+
+> 若升级后仍需使用本项目：先以 `tools/pe_scan.py` 重新扫描 `flue.dll` 获取新的 RVA
+> （参见「版本适配」），再更新 `tools/hook_a8key.js`。
 
 ---
 
-## 快速开始
+## 部署
 
-### 前置：exe 之外还缺什么
+### 运行依赖
 
-`wxsign.exe` 自带 Python 运行时，**不需要装 Python**。但它要调 WMPFDebugger 去 hook 微信，
-那个东西是 Node 写的，所以还需要 Node 和它的一堆依赖：
+`wxsign.exe` 已内嵌 Python 运行时，**无需安装 Python**。但其 hook 依赖 WMPFDebugger（基于 Node.js），
+因此仍需以下组件：
 
-| 项 | 谁提供 |
+| 组件 | 提供方 |
 |---|---|
-| 系统 | Windows x64（你本来就有） |
-| 微信 **4.1.15.56** | 你装（Release 附件有安装包），并关闭自动更新 |
-| Node 22+ | **`wxsign-setup.exe` 自动装**（便携版，只落在程序目录，不进系统） |
-| WMPFDebugger + tsx + frida | **`wxsign-setup.exe` 自动装** |
-| Python 3.10+ | 只有**源码运行**才需要，exe 不用 |
+| 操作系统 | Windows x64 |
+| 微信 PC 4.1.15.56 | 使用者安装（发布页提供安装包），并关闭自动更新 |
+| Node.js 22+ | 由 `wxsign-setup.exe` 安装（便携版，仅置于程序目录） |
+| WMPFDebugger + tsx + frida | 由 `wxsign-setup.exe` 安装 |
+| Python 3.10+ | 仅源码运行方式需要 |
 
-### 第一次使用：先跑环境安装器
-
-```
-1. wxsign-setup.exe     ← 自动补齐 Node + WMPFDebugger + 依赖
-2. wxsign.exe           ← 装好后再跑这个
-```
-
-`wxsign-setup.exe` 只补缺的，**已有的绝不覆盖**，装的东西全在它自己目录下（`runtime\node`、
-`WMPFDebugger`），不写注册表、不改 PATH、不动系统环境。
-
-四步：
+### 第一步：运行环境安装器
 
 ```
-Node 运行时     下载便携版 zip 解压到 runtime\node（不装进系统）
-WMPFDebugger    git clone，没有 git 就用 codeload zip
-依赖 tsx/frida  npm install（frida 会拉预编译绑定，约 130 MB）
-偏移配置        跑一次 --auto-detect 探测出来，写进 frida\config\win32\
+1. 运行 wxsign-setup.exe    安装并配置缺失组件
+2. 运行 wxsign.exe          启动自动签到
 ```
 
-> **偏移配置这一步要求微信在运行**（要 attach 上去扫）。如果当时微信没开，
-> 这一步会失败——开好微信重跑一次就行；`wxsign.exe` 也会在缺配置时自动加 `--auto-detect` 兜底。
+`wxsign-setup.exe` 仅安装缺失组件，**不覆盖已存在的内容**。安装产物全部位于程序目录
+（`runtime\node`、`WMPFDebugger`），不写入注册表、不修改 PATH 环境变量、不改动系统配置。
 
-它也支持：
+安装步骤如下：
+
+```
+Node 运行时      下载便携版压缩包并解压至 runtime\node，不写入系统目录
+WMPFDebugger     使用 git clone；未安装 git 时改用 codeload 压缩包
+依赖 tsx / frida 执行 npm install（frida 预编译绑定约 130 MB）
+偏移配置         执行一次 --auto-detect 并将结果写入 frida\config\win32\
+```
+
+> 偏移配置步骤要求微信处于运行状态（需附加至进程进行扫描）。若微信未启动，该步骤将失败，
+> 启动微信后重新运行安装器即可。`wxsign.exe` 在检测到配置缺失时亦会自动附加 `--auto-detect` 参数。
+
+安装器支持以下参数：
 
 ```bat
-wxsign-setup.exe --check      只看缺什么，不安装
+wxsign-setup.exe --check      仅执行环境检测，不安装
 ```
 
-路径仍可用环境变量覆盖（想用系统已有的安装）：
+如需复用系统中已存在的组件，可通过环境变量指定路径：
 
-```bash
+```bat
 set WZ_WMPF_DIR=D:\tools\WMPFDebugger
 set WZ_NODE=C:\Program Files\nodejs\node.exe
 ```
 
-### 如何使用
+### 第二步：启动签到程序
 
-**方式一：两个 exe（推荐，不装 Python）**
+**方式一：使用可执行文件（无需安装 Python）**
 
-到 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载
-`wxsign-setup.exe` 和 `wxsign.exe`，放进**同一个目录**：
+从 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载
+`wxsign-setup.exe` 与 `wxsign.exe`，置于**同一目录**，然后依次运行：
 
 ```
-先双击 wxsign-setup.exe     装环境（只需一次）
-再双击 wxsign.exe           开始签到
+1. wxsign-setup.exe     配置运行环境（仅首次需要）
+2. wxsign.exe           启动自动签到
 ```
 
-`wxsign.exe` 只做三件事：自检、起代理、告诉你现在在干什么。
+`wxsign.exe` 启动后依次执行环境自检、启动调试代理并显示运行状态：
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  微助教自动签到                                          │
-│  v1.2   by qyr0721                                       │
+│  微助教自动签到  v1.2                                    │
+│  by qyr0721                                              │
 │  github.com/qyr0721/weizhujiao-autosign-pc-hook          │
 └──────────────────────────────────────────────────────────┘
 
@@ -194,7 +194,7 @@ set WZ_NODE=C:\Program Files\nodejs\node.exe
   Ctrl+C 退出，不影响正在运行的小程序
 ```
 
-> exe 只含调度与签到逻辑，**不含** WMPFDebugger 与微信安装包（后者在 Release 附件里）。
+> 可执行文件仅包含调度与签到逻辑，不含 WMPFDebugger 与微信安装包（后者见发布页附件）。
 
 **方式二：源码运行**
 
@@ -203,82 +203,83 @@ git clone https://github.com/qyr0721/weizhujiao-autosign-pc-hook.git
 cd weizhujiao-autosign-pc-hook
 pip install websockets
 
-python run.py --check     # 一眼看状态：代理 / 通道 / 当前号
-start.bat                 # 常驻（取号 + 签到一起跑）
+python run.py --check     # 检测代理、通道与当前凭证状态
+start.bat                 # 常驻运行（凭证获取与签到同时进行）
 ```
 
-签到参数（可选）：
+可选配置项：
 
 ```bash
 cp signer/config.example.json signer/config.json
-# 填 lat / lon（GPS 签到用）、poll、idle_poll / idle_after
+# 配置 lat / lon（GPS 签到）、poll、idle_poll / idle_after
 ```
 
-> `signer/config.json` 在 `.gitignore` 里，不会被提交。
+> `signer/config.json` 已列入 `.gitignore`，不会被提交。
 
-### 关于「通道」
+### 调试通道说明
 
-WMPF 的调试通道只在**小程序启动那一刻**建立（hook 打在 `AppletIndexContainer::OnLoadStart`），
-而且**不会自动重连**。所以顺序是：
+WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletIndexContainer::OnLoadStart`），
+且断开后不会自动重连。因此启动顺序如下：
 
 ```
-1. 先起 run.py / start.bat / wxsign.exe
-2. 再在微信里打开一个小程序一次 —— 之后可以缩到后台不管
+1. 启动 run.py / start.bat / wxsign.exe
+2. 在微信中打开任意一个小程序一次，此后可将其置于后台
 ```
 
-**推荐用微信官方的「小程序示例」**：在微信「小程序」面板搜索这个名字即可，
-它是官方 demo，体积很小，启动快，而且长期不会被下线。
+建议使用微信官方的「小程序示例」：在微信「小程序」面板中搜索该名称即可。
+该程序体积较小、启动迅速且长期可用。
 
-> 不要用微信文章或公众号页面代替：它们不算小程序，不会拉起 WMPF 运行时。
+> 微信文章页与公众号页面不属于小程序，不会触发 WMPF 运行时初始化，无法替代。
 
-> **重要**：小程序是以「调试态」被拉起的（`scene=1101`、`remoteDebugMode=1`），
-> 9421 那条 WebSocket 就是它的生命线。**关代理 = 微信立刻把小程序关掉。**
-> 所以本项目退出时**不关代理**。
+> **注意**：小程序以调试模式启动（`scene=1101`、`remoteDebugMode=1`），
+> 9421 端口上的 WebSocket 连接为其生命周期所依赖。终止调试代理将导致微信立即关闭该小程序，
+> 因此本项目退出时不会关闭代理进程。
 
 ---
 
-## 目录
+## 目录结构
 
-| 路径 | 作用 |
+| 路径 | 说明 |
 |---|---|
-| `run.py` / `start.bat` | 一键入口：代理 + 通道 + 续号 + 拉起签到侧 |
-| `wizard.py` | 引导式启动器（`wxsign.exe` 的源码） |
-| `setup.py` | 环境安装器（`wxsign-setup.exe` 的源码） |
-| `uikit.py` | 两个 exe 共用的终端渲染与系统探测 |
-| `signcore.py` | 签到核心（轮询 / 提交 / 幂等 / GPS / 空窗退避） |
-| `signer/sign_pc.py` | 签到 CLI（`signcore` 的薄壳） |
-| `get_openid.py` | 续号核心：多策略触发（S0/S3/S1/S2）+ 落点捕获 |
-| `channel_keeper.py` | 三态探测（代理死 / 通道断 / 可用）+ 代理托管 |
-| `cdp_sign_agent.py` | 最小 CDP 客户端（`Target.attachToTarget` per-tab 会话） |
-| `tools/pe_scan.py` | 无 IDA 的 PE 扫描器：字符串 / RIP 引用 / `.pdata` 函数边界 |
-| `tools/probe_a8key.py` + `tools/hook_a8key.js` | a8key 拦截层观察（逆向用） |
-| `tools/trigger_oauth.py` | 授权触发三变体（`href` / `open` / `nav`）重测 |
-| `tools/oid_probe.py` | openid 探针（单次校验 / 生命周期观测 / SSR 校验） |
-| `tools/start_proxy.js` | 脱离终端常驻启动代理（无 shell 可用的环境） |
-| `patches/proxy-mux.ts` | CDP 代理多客户端复用（id 重写） |
-| `docs/` | [`DESIGN.md`](docs/DESIGN.md) 机制与取舍；[`TESTING.md`](docs/TESTING.md) 测试说明 |
+| `run.py` / `start.bat` | 主入口：代理守护、通道守护、凭证获取与签到调度 |
+| `wizard.py` | 启动器源码（`wxsign.exe`） |
+| `setup.py` | 环境安装器源码（`wxsign-setup.exe`） |
+| `uikit.py` | 两个可执行文件共用的终端渲染与系统探测模块 |
+| `signcore.py` | 签到核心：轮询、提交、幂等判定、GPS 与空闲退避 |
+| `signer/sign_pc.py` | 签到命令行入口（`signcore` 封装） |
+| `get_openid.py` | 凭证获取：多策略触发（S0/S3/S1/S2）与落点捕获 |
+| `channel_keeper.py` | 三态探测（代理未运行 / 通道断开 / 可用）与代理托管 |
+| `cdp_sign_agent.py` | 最小 CDP 客户端（`Target.attachToTarget` 单标签页会话） |
+| `tools/pe_scan.py` | PE 静态分析：字符串、RIP 相对引用、`.pdata` 函数边界 |
+| `tools/probe_a8key.py` + `tools/hook_a8key.js` | a8key 导航拦截层观测 |
+| `tools/trigger_oauth.py` | 授权触发方式验证（`href` / `open` / `nav`） |
+| `tools/oid_probe.py` | openid 探测：单次校验、生命周期观测、签到页 SSR 校验 |
+| `tools/start_proxy.js` | 无终端环境下以脱离方式启动代理 |
+| `patches/proxy-mux.ts` | CDP 代理多客户端复用（请求 id 重写） |
+| `docs/` | [`DESIGN.md`](docs/DESIGN.md) 实现机制；[`TESTING.md`](docs/TESTING.md) 测试说明 |
 | `test/` | 离线测试（`python test/run_all.py`） |
 
 ---
 
-## 三个必须知道的坑
+## 注意事项
 
-1. **新授权会把旧 openid 顶成 401。**
-   所以续号只能是「检测到 401 才续」，**绝不能定时续**——定时续等于不停废号。
-   （这也是签到侧用 `exit(2)` 通知续号、而不是自己定时刷号的原因。）
+1. **新的授权会使此前的 openid 失效。**
+   凭证续期应仅在检测到 HTTP 401 时执行，不应按固定周期重新获取，否则将不断使当前凭证失效。
+   签到模块通过退出码 2 通知主循环，而非自行周期性刷新。
 
-2. **`active_signs` 的 200 不能证明号有效。**
-   无论过期还是真的没有签到，接口都返回 200；只有「假号 / 被顶掉」才 401。
-   签到页 SSR 也不校验，纯粹回显 `session.openId`。**没有廉价验号接口**，只能真的去签。
+2. **`active_signs` 返回 200 不能作为凭证有效的依据。**
+   凭证过期与当前无签到任务均返回 200，仅无效或被顶替的凭证返回 401。
+   签到页 SSR 亦不校验凭证，仅回显 `session.openId`。因此不存在低成本的凭证校验方式，
+   只能通过实际提交验证。
 
-3. **a8key 有重定向限流**（`wechat_redirect limit reached, cancelling navigation`）。
-   不要循环重试，所有触发都带 cooldown。
+3. **a8key 存在重定向限流**（`wechat_redirect limit reached, cancelling navigation`）。
+   不应循环重试，所有触发均设有冷却时间。
 
 ---
 
 ## 版本适配
 
-`tools/hook_a8key.js` 里的 RVA 与 WMPF 版本死绑（内置 **25799**）。微信升级后先重扫：
+`tools/hook_a8key.js` 中的 RVA 与 WMPF 版本严格绑定（内置 **25799**）。微信升级后需重新扫描：
 
 ```bash
 python tools/pe_scan.py "<路径>\flue.dll" \
@@ -286,26 +287,27 @@ python tools/pe_scan.py "<路径>\flue.dll" \
   --json a8key_scan.json
 ```
 
-`.pdata` 给出的函数边界是精确的，比按 `0xCC` 对齐猜靠得住。
-上游的 `OnLoadStart` 偏移用 WMPFDebugger 的 `--auto-detect`。
+`.pdata` 提供的函数边界较为准确，优于依据 `0xCC` 填充对齐进行推断。
+`OnLoadStart` 偏移可使用 WMPFDebugger 的 `--auto-detect` 参数获取。
 
 ---
 
-## 其他项目
+## 相关项目
 
-- **Android root版**：[qyr0721/weizhujiao-autosign-android](https://github.com/qyr0721/weizhujiao-autosign-android)（MIT）
-  Magisk / KernelSU 模块，走 root 静默授权 + 读 Cookie 库取号。签到接口契约与本文一致。
+- **Android root 版**：[qyr0721/weizhujiao-autosign-android](https://github.com/qyr0721/weizhujiao-autosign-android)（MIT）
+  以 Magisk / KernelSU 模块形式实现，通过 root 静默授权并读取 Cookie 数据库获取凭证。
+  签到接口契约与本项目一致。
 
 ---
 
-## 法律与免责
+## 许可与免责
 
-- 本项目仅供**学习与技术研究**（浏览器调试协议、导航拦截机制、PE 静态分析）。
-- 它通过 patch 微信运行时内存打通调试通道，属于绕过客户端自身限制；后果自负，
-  可能违反微信软件许可协议，存在账号风险。
-- 微信安装包由腾讯发布，此处仅为方便锁定版本而转载，版权与许可归腾讯所有；
+- 本项目仅供学习与技术研究使用（浏览器调试协议、导航拦截机制、PE 静态分析）。
+- 本项目通过修改微信运行时内存打通调试通道，属于绕过客户端自身限制的行为。
+  使用者应自行承担相应风险，该行为可能违反微信软件许可协议并存在账号风险。
+- 微信安装包由腾讯发布，此处仅为便于版本锁定而提供，版权与许可归腾讯所有；
   建议优先从 [pc.weixin.qq.com](https://pc.weixin.qq.com/) 获取。
-- `patches/proxy-mux.ts` 是 WMPFDebugger（GPLv2）的衍生修改，故本仓库整体
-  **GPL-2.0-only**；其 `src/third-party` 版权归腾讯所有。
-- 上游与贡献者：**evi0s/WMPFDebugger** 及其所有贡献者。
-- 请勿用于违反所在学校/机构规定的用途。
+- `patches/proxy-mux.ts` 为 WMPFDebugger（GPLv2）的衍生修改，因此本仓库整体采用
+  **GPL-2.0-only**；其中 `src/third-party` 的版权归腾讯所有。
+- 上游项目与贡献者：**evi0s/WMPFDebugger** 及其全部贡献者。
+- 请勿将本项目用于违反所在学校或机构规定的用途。
