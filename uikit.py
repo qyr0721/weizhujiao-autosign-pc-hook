@@ -22,7 +22,7 @@ import time
 import unicodedata
 
 APP = "微助教自动签到"
-VER = "v1.2"
+VER = "v1.3"
 AUTHOR = "qyr0721"
 REPO = "github.com/qyr0721/weizhujiao-autosign-pc-hook"
 
@@ -336,17 +336,18 @@ def resolve_wmpf_dir(base, extra=None):
 
 
 def resolve_node(base):
-    """找 node.exe：环境变量 → PATH → 程序目录下的 runtime/node。"""
+    """找 node.exe：环境变量 → 程序目录内置的 runtime/node → PATH。
+
+    内置版本优先于系统 PATH：集成版自带 Node，应始终使用它，
+    避免被系统上其它版本（可能过旧）干扰。
+    """
     env = os.environ.get("WZ_NODE")
     if env and os.path.isfile(env):
         return env
-    import shutil
-    p = shutil.which("node")
-    if p:
-        return p
     for rel in (os.path.join("runtime", "node", "node.exe"),
                 os.path.join("node", "node.exe")):
         cand = os.path.join(base, rel)
         if os.path.isfile(cand):
             return cand
-    return None
+    import shutil
+    return shutil.which("node")
