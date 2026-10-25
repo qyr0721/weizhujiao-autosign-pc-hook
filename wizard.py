@@ -28,6 +28,7 @@ if FROZEN:
 
 import channel_keeper as ck          # noqa: E402
 import get_openid as g               # noqa: E402
+import installer                     # noqa: E402
 import run as runmod                 # noqa: E402
 import signcore                      # noqa: E402
 import uikit as U                    # noqa: E402
@@ -134,10 +135,10 @@ def preflight(base=HERE):
                      "WeChatWin_4.1.15.exe 并关闭自动更新" % (wmpf, U.KNOWN_VERSION))
     if not wmpf_dir:
         problems.append("缺 WMPFDebugger")
-        fixes.append("运行同目录的 wxsign-setup.exe 自动安装")
+        fixes.append("缺少 WMPFDebugger 或其依赖，程序将尝试自动部署")
     if not node:
         problems.append("缺 Node")
-        fixes.append("运行同目录的 wxsign-setup.exe 自动安装便携版 Node")
+        fixes.append("缺少 Node 运行时，程序将尝试自动部署；亦可手动安装 Node 22+")
 
     info = {
         "wechat": wx_ver or "未检测到",
@@ -305,6 +306,43 @@ class Signer:
         self.stop.set()
 
 
+# ================================================================ 自动部署
+def auto_setup(log, state, panel, term):
+    """部署缺失的运行组件（便携版行为）。
+
+    返回 True 表示 Node 与 WMPFDebugger 现已齐备，可以继续启动。
+    偏移配置失败不视为致命：channel_keeper 会在缺配置时自动附加 --auto-detect。
+    """
+    log.write("运行环境不完整，开始自动部署")
+    state.info["hint"] = ["正在检查缺失组件…"]
+    state.set_action("准备部署运行环境…")
+    panel.render(state.snapshot())
+
+    holder = {}
+
+    def notify(action, progress=""):
+        state.set_action(action + ("  " + progress if progress else ""))
+        if holder.get("setup"):
+            state.info["hint"] = [
+                "    %s %s %s" % (m, U.fit(lbl, 16), det)
+                for m, lbl, det in holder["setup"].summary()]
+        panel.render(state.snapshot())
+
+    setup = installer.Setup(log, HERE, notify=notify)
+    holder["setup"] = setup
+    setup.run()
+
+    done = bool(U.resolve_node(HERE)
+                and U.resolve_wmpf_dir(HERE, extra=ck.DEFAULT_WMPF))
+    log.write("自动部署结束：Node 与 WMPFDebugger %s"
+              % ("可用" if done else "仍不可用"))
+    if not done:
+        state.info["hint"] = [
+            "    %s %s %s" % (m, U.fit(lbl, 16), det)
+            for m, lbl, det in setup.summary()]
+    return done
+
+
 # ================================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -316,6 +354,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
     ap.add_argument("--config", default=os.path.join(HERE, "signer", "config.json"))
     ap.add_argument("--no-pause", action="store_true", help="退出时不等待回车")
+    ap.add_argument("--no-setup", action="store_true", help="不自动部署环境")
     ap.set_defaults(with_sign=True)
     args = ap.parse_args()
 
@@ -352,6 +391,17 @@ def main():
     if args.check:
         _finish(term, args, "自检完成：%s" % info["note"])
         return 0 if info["ok"] else 1
+
+    # 环境不完整时先自动部署（便携版行为：一个 exe，缺什么补什么）
+    if not info["ok"] and not args.no_setup:
+        deployed = auto_setup(log, state, panel, term)
+        if deployed:
+            info, fixes, wmpf_dir, node = preflight()
+            state.info.update({k: v for k, v in info.items()
+                               if k in ("wechat", "wmpf", "wmpf_ok", "ok", "note")})
+            state.info["hint"] = state.hint_idle
+            state.set_action("环境部署完成" if info["ok"] else "环境仍未就绪")
+            panel.render(state.snapshot())
 
     if not info["ok"]:
         _show_fixes(term, panel, fixes)
