@@ -82,6 +82,16 @@ def oid_state(oid):
         return "neterr"
 
 
+async def oid_state_async(oid):
+    """oid_state 的异步版。
+
+    oid_state 是同步 HTTP（timeout=12）。直接在事件循环里调用会卡死整个
+    程序——期间 CDP 既收不到事件也发不出命令，取号的观察窗口等于白等。
+    所以丢到线程池里跑。
+    """
+    return await asyncio.to_thread(oid_state, oid)
+
+
 def ts():
     return time.strftime("%H:%M:%S")
 
@@ -152,7 +162,7 @@ async def one_attempt(args, log):
                 if not m:
                     continue
                 cand = m.group(1)
-                if oid_state(cand) == "401":
+                if await oid_state_async(cand) == "401":
                     log("S0 候选 %s… 已 401（被顶掉），跳过" % cand[:8])
                     continue
                 log("S0 命中：URL 里已有 openid（%s）" % (t.get("url") or "")[:80])
@@ -214,16 +224,18 @@ async def one_attempt(args, log):
                 continue
 
             # 观察窗口：既看事件，也轮询 target 列表（两种信号互相兜底）
+            # 先扫一遍再等：导航刚触发时 openid 可能已经落下了，
+            # 原来先 sleep(1.5) 再扫，等于每轮都白白多等 1.5s。
             old = current_oid(args.out) if args.from_sign else ""
             deadline = time.time() + args.observe
-            while time.time() < deadline:
-                await asyncio.sleep(1.5)
+            while True:
                 for m in cdp.events:
                     u = ""
                     if m.get("method") == "Page.frameNavigated":
                         u = (m.get("params", {}).get("frame", {}) or {}).get("url", "")
                     mm = OID_RE.search(u or "")
-                    if mm and mm.group(1) != old and oid_state(mm.group(1)) != "401":
+                    if mm and mm.group(1) != old \
+                            and await oid_state_async(mm.group(1)) != "401":
                         log("  [事件] 抓到 openid: %s" % (u or "")[:100])
                         return mm.group(1), name
                 cdp.events.clear()
@@ -232,13 +244,16 @@ async def one_attempt(args, log):
                 except Exception:  # noqa: BLE001
                     now = []
                 oid, where = scan_targets_for_oid(now, exclude=old)
-                if oid and oid_state(oid) == "401":
+                if oid and await oid_state_async(oid) == "401":
                     # 残留的旧签到页会带着已被顶掉的死号，必须跳过
                     log("  [轮询] %s… 已 401（残留旧页），跳过" % oid[:8])
                     oid, where = None, None
                 if oid:
                     log("  [轮询] 抓到 openid: %s" % (where or "")[:100])
                     return oid, name
+                if time.time() >= deadline:
+                    break
+                await asyncio.sleep(1.0)
             log("  %s 观察期内未出现 openid" % name)
 
         return None, "all-failed"
@@ -290,7 +305,7 @@ async def run(args, log):
             # 否则会把正在用的号弄死。只有明确 401（或没有号）才动手。
             cur = current_oid(args.out)
             if cur and not args.force:
-                st = oid_state(cur)
+                st = await oid_state_async(cur)
                 if st != "401":
                     if time.time() - last_check_msg > 120:
                         last_check_msg = time.time()
