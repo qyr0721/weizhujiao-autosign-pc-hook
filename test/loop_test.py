@@ -55,7 +55,7 @@ BUDGET = 3.0
 def _drive_loop(hook, until_beat):
     """跑 run() 主循环，直到出现「正常值守」再取消。"""
     ns = argparse.Namespace(
-        url=g.DEFAULT_URL, out=OUT, poll=POLL, cooldown=15.0, observe=18.0,
+        url=g.DEFAULT_URL, out=OUT, poll=POLL, cooldown=0.0, observe=18.0,
         check=False, once=False, with_sign=False,
         wmpf_dir=ck.DEFAULT_WMPF, node=ck.DEFAULT_NODE,
     )
