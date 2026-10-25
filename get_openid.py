@@ -132,9 +132,15 @@ def pick_tab(targets, prefer_sign=False):
 
 
 def scan_targets_for_oid(targets, exclude=""):
+    """从 target 列表里找带 openid 的页面。
+
+    exclude 可以是单个 openid 字符串，也可以是一组已知 openid（集合）——
+    导航前残留的旧号都要排掉，否则会被当成新号。
+    """
+    skip = {exclude} if isinstance(exclude, str) and exclude else set(exclude or ())
     for t in targets:
         m = OID_RE.search(t.get("url") or "")
-        if m and m.group(1) != exclude:
+        if m and m.group(1) not in skip:
             return m.group(1), t.get("url")
     return None, None
 
@@ -198,6 +204,22 @@ async def one_attempt(args, log):
             return None, "no-tab"
         log("选中标签页(%s)：%s" % (why, (tab.get("url") or "")[:90]))
 
+        # 导航前把所有已存在的 openid 记成「已知」。页面 URL 里往往残留着
+        # 上一轮的号，而导航本身会签发新号并把旧号顶成 401。若不排除这些
+        # 残留号，观察窗口会在导航完成前就扫到它们，当成新号写入 —— 于是
+        # 签到侧拿到一个即将被顶掉的号，几秒后报 401，又取号，又扫到残留
+        # 号……死循环。见 loop_test.test_reject_preexisting_oid。
+        known = set()
+        for t in infos:
+            m0 = OID_RE.search(t.get("url") or "")
+            if m0:
+                known.add(m0.group(1))
+        if args.from_sign:
+            cur0 = current_oid(args.out)
+            if cur0:
+                known.add(cur0)
+        log("  导航前已有 %d 个 openid（标记为已知，不算新号）" % len(known))
+
         await base.attach(cdp, tab["targetId"])
         for dom in ("Page.enable", "Runtime.enable"):
             try:
@@ -256,7 +278,8 @@ async def one_attempt(args, log):
             # 观察窗口：既看事件，也轮询 target 列表（两种信号互相兜底）
             # 先扫一遍再等：导航刚触发时 openid 可能已经落下了，
             # 原来先 sleep(1.5) 再扫，等于每轮都白白多等 1.5s。
-            old = current_oid(args.out) if args.from_sign else ""
+            # 排除集用 known（导航前所有已存在的号），不是 current_oid ——
+            # 否则会把页面残留的旧号当成新号，见 test_reject_preexisting_oid。
             deadline = time.time() + args.observe
             while True:
                 for m in cdp.events:
@@ -264,7 +287,7 @@ async def one_attempt(args, log):
                     if m.get("method") == "Page.frameNavigated":
                         u = (m.get("params", {}).get("frame", {}) or {}).get("url", "")
                     mm = OID_RE.search(u or "")
-                    if mm and mm.group(1) != old \
+                    if mm and mm.group(1) not in known \
                             and await oid_state_async(mm.group(1)) != "401":
                         log("  [事件] 抓到 openid: %s" % (u or "")[:100])
                         return mm.group(1), name
@@ -273,7 +296,7 @@ async def one_attempt(args, log):
                     now = (await cdp.send("Target.getTargets", {}, timeout=8)).get("targetInfos", [])
                 except Exception:  # noqa: BLE001
                     now = []
-                oid, where = scan_targets_for_oid(now, exclude=old)
+                oid, where = scan_targets_for_oid(now, exclude=known)
                 if oid and await oid_state_async(oid) == "401":
                     # 残留的旧签到页会带着已被顶掉的死号，必须跳过
                     log("  [轮询] %s… 已 401（残留旧页），跳过" % oid[:8])
