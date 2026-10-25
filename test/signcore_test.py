@@ -3,10 +3,9 @@
 """
 signcore_test.py — 签到核心（signcore.sign_loop）行为契约
 
-重点验证本轮改动：**取消时段闸门**
+重点验证
   · 不再有 class_hours / in_hours（任何时刻都发请求）
-  · 空窗期用自适应退避降频（idle_after → idle_poll）
-  · 一出现签到立刻恢复 poll
+  · 轮询间隔固定为 poll，不因空窗改变，也不依赖本地时间
 
   python test/signcore_test.py
 """
@@ -79,30 +78,29 @@ def gaps(calls):
 
 
 def main():
-    print("=== signcore：取消时段闸门 ===")
+    print("=== signcore：固定间隔轮询 ===")
 
-    # 1. 结构上不应再有时段闸门
+    # 1. 结构上不应再有时段闸门，也不再有空闲退避
     ok(not hasattr(signcore, "in_hours"), "已移除 in_hours()")
     ok("class_hours" not in signcore.DEFAULTS, "DEFAULTS 不再含 class_hours")
-    ok("idle_poll" in signcore.DEFAULTS and "idle_after" in signcore.DEFAULTS,
-       "新增 idle_poll / idle_after")
+    ok("idle_poll" not in signcore.DEFAULTS and "idle_after" not in signcore.DEFAULTS,
+       "DEFAULTS 不再含 idle_poll / idle_after")
 
-    # 2. 空窗期：先 poll，后 idle_poll（不论当前几点）
+    # 2. 间隔恒定：无论有没有签到，都按 poll 走
     d, f = new_env()
     cfg = signcore.load_cfg(None)
-    cfg.update({"poll": 0.1, "idle_poll": 0.4, "idle_after": 3})
-    calls, box = run_loop(cfg, f, 1.7, lambda n, m, p, b: (200, "[]"))
+    cfg.update({"poll": 0.1})
+    calls, box = run_loop(cfg, f, 1.2, lambda n, m, p, b: (200, "[]"))
     g = gaps(calls)
     ok(len(calls) >= 4, "空窗期持续轮询（%d 次请求）" % len(calls), str(g))
-    ok(g[:2] and max(g[:2]) < 0.25, "起步用 poll（间隔 %s）" % (g[:2],), str(g))
-    ok(g and min(g[-2:]) > 0.25, "空窗后退避到 idle_poll（后段间隔 %s）" % (g[-2:],), str(g))
+    ok(g and max(g) < 0.25, "空窗期间隔仍为 poll（%s）" % (g,), str(g))
     ok(all(c["p"] == "/student/active_signs" for c in calls), "始终查询 active_signs")
     shutil.rmtree(d, ignore_errors=True)
 
-    # 3. 出现签到：立即恢复 poll，且只提交一次
+    # 3. 出现签到：立即提交，且只提交一次
     d, f = new_env()
     sign_cfg = signcore.load_cfg(None)
-    sign_cfg.update({"poll": 0.1, "idle_poll": 0.5, "idle_after": 2})
+    sign_cfg.update({"poll": 0.1})
 
     def responder(n, m, p, b):
         if p == "/student/active_signs":
@@ -117,7 +115,7 @@ def main():
     ok(posts and posts[0]["b"] == {"courseId": 22, "signId": 11},
        "提交体与契约一致", str(posts[0]["b"] if posts else None))
     tail = gaps(calls)
-    ok(tail and min(tail[-2:]) < 0.25, "有签到后恢复 poll（后段 %s）" % (tail[-2:],), str(tail))
+    ok(tail and max(tail) < 0.25, "有签到后间隔仍为 poll（%s）" % (tail,), str(tail))
     shutil.rmtree(d, ignore_errors=True)
 
     # 4. 401：写 stale 标记并返回 2
@@ -131,7 +129,7 @@ def main():
     # 5. 幂等：repeat sign in 记为已签，不反复重试
     d, f = new_env()
     cfg = signcore.load_cfg(None)
-    cfg.update({"poll": 0.1, "idle_poll": 0.1, "idle_after": 99})
+    cfg.update({"poll": 0.1})
 
     def dup(n, m, p, b):
         if p == "/student/active_signs":
