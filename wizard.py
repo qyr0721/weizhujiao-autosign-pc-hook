@@ -192,7 +192,11 @@ class State:
         if "[签到]" in m:
             return self._feed_sign(m)
 
-        if "代理就绪" in m or "拉起代理" in m:
+        if "auto-detecting hook offsets" in m:
+            self.set_action("正在注入调试 hook…（约 10 秒，此期间勿开小程序）")
+        elif "you can now open any miniapps" in m or "script loaded" in m:
+            self.set_action("调试 hook 已注入，现在可以打开小程序")
+        elif "代理就绪" in m or "拉起代理" in m:
             self.set_action("调试代理已就绪")
         elif "代理没在监听" in m:
             self.set_action("调试代理未运行，正在拉起…")
@@ -343,6 +347,32 @@ def auto_setup(log, state, panel, term):
     return done
 
 
+# ================================================================ 偏移配置补全
+def _ensure_offsets_once(log, state, panel, wmpf_dir):
+    """缺偏移配置就补一次（非致命）。
+
+    仓库自带的配置只覆盖旧版本；本机 WMPF 25799 没有配置时，代理会带
+    --auto-detect 启动，注入要多等约 12 秒，而且这 12 秒里打开小程序连不上。
+    所以启动时只要发现配置缺失就探测一次并写回，下次启动即可秒注入。
+    """
+    try:
+        st = installer.Setup(log, HERE, notify=lambda a, p="": None)
+        st.wmpf_dir = wmpf_dir
+        st.wmpf = str(U.find_wmpf_versions()[-1]) if U.find_wmpf_versions() else "未检测到"
+        cfg = st._offset_path()
+        if not cfg or os.path.isfile(cfg):
+            return
+        if not U.list_processes({"wechatappex.exe"}):
+            log.write("偏移配置缺失，且微信未运行——本次将用 --auto-detect（注入慢约 12 秒）")
+            return
+        state.set_action("探测 hook 偏移（约 10 秒，仅首次）…")
+        panel.render(state.snapshot())
+        if st.ensure_offsets():
+            log.write("偏移配置已生成，下次启动注入更快")
+    except Exception as exc:  # noqa: BLE001
+        log.write("补偏移配置失败（不影响运行）：%s" % exc)
+
+
 # ================================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -365,10 +395,12 @@ def main():
     info, fixes, wmpf_dir, node = preflight()
 
     ck.OUT = lambda m: log.write(m, "[ck] ")
-    ck.ProxySupervisor.SINK = lambda line: log.write(line, "[proxy] ")
 
     state = State(info)
     state.set_action("环境自检完成" if info["ok"] else "环境未就绪")
+    # 代理输出同时喂给面板：hook 注入有最长约 12 秒的窗口（--auto-detect），
+    # 这期间打开小程序连不上，必须让面板说清楚「什么时候才能开」。
+    ck.ProxySupervisor.SINK = lambda line: _on_event("[proxy] " + line, state, panel, log)
     state.info["logfile"] = log.short if log.ok else "（日志不可写）"
 
     if term.plain:
@@ -408,6 +440,13 @@ def main():
         log.write("环境未就绪，退出")
         _finish(term, args, "请先处理上面的事项（或运行 wxsign-setup.exe）")
         return 1
+
+    # 偏移配置是「非致命」项——Node 与 WMPFDebugger 齐了 preflight 就算通过，
+    # 于是自动部署再也不会跑，ensure_offsets() 永远没机会执行，配置永远缺，
+    # 每次启动都要 --auto-detect（注入多等约 12 秒）。
+    # 这里只要配置缺失就单独补一次，失败不阻塞启动。
+    if not args.no_setup and wmpf_dir and node:
+        _ensure_offsets_once(log, state, panel, wmpf_dir)
 
     state.set_action("启动签到服务…")
     panel.render(state.snapshot())
