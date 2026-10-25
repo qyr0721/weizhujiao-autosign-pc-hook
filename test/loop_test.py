@@ -180,6 +180,69 @@ def test_oid_state_off_eventloop():
        % (three, one), "实测 %.3fs" % three)
 
 
+def test_no_30s_after_spawn():
+    """冷启动的两段空等（来自 15:29:48 实测日志）：
+      · 拉起代理成功后不该再睡 30s（该 30s 是「起不来」的退避）
+      · 通道不通时轮询要勤快，探测用短超时，别让「连上」到「面板切换」白等
+    """
+    with open(OUT, "w", encoding="utf-8") as f:
+        f.write(NEW + "\n")            # 号有效 → 走「正常值守」路径，不触发取号
+
+    t0 = time.time()
+    msgs = []
+    marks = {}
+
+    def hook(msg):
+        at = time.time() - t0
+        msgs.append((at, msg))
+        if "代理就绪" in msg and "ready" not in marks:
+            marks["ready"] = at
+        if "通道未就绪" in msg and "down" not in marks:
+            marks["down"] = at
+        if "正常值守" in msg and "beat" not in marks:
+            marks["beat"] = at
+
+    calls = {"n": 0}
+    timeouts = []
+
+    async def fake_probe(timeout=6.0):
+        calls["n"] += 1
+        timeouts.append(timeout)
+        await asyncio.sleep(0.02)
+        if calls["n"] == 1:
+            return ck.PROXY_DOWN, [], "port-closed"      # 冷启动：代理还没起来
+        if calls["n"] == 2:
+            return ck.CHANNEL_DOWN, [], "no-reply"       # 起来了，小程序还没连
+        return ck.CHANNEL_UP, [{"url": "https://x/teachermate/sign", "type": "page"}], "ok"
+
+    async def fake_oid_state(oid):
+        await asyncio.sleep(0.01)
+        return "ok"
+
+    ck.probe_channel = fake_probe
+    ck.ProxySupervisor.ensure = lambda self: True        # 假装瞬间拉起代理
+    g.oid_state_async = fake_oid_state
+
+    _drive_loop(hook, lambda: marks.get("beat") is not None)
+
+    print("  时间线：" + " → ".join("%.2fs %s" % (a, m.split("：")[0]) for a, m in msgs))
+
+    ok({"ready", "down", "beat"} <= set(marks),
+       "走完 代理就绪 → 等待小程序连接 → 监视中", str(marks))
+    if {"ready", "down"} <= set(marks):
+        gap1 = marks["down"] - marks["ready"]
+        ok(gap1 < 1.0, "拉起代理后立刻重探，未空等 30s（%.2fs）" % gap1,
+           "实测 %.2fs —— 30s 退避被误用到成功路径" % gap1)
+    if {"down", "beat"} <= set(marks):
+        gap2 = marks["beat"] - marks["down"]
+        ok(gap2 < 5.0, "通道不通时勤快轮询，连上后很快切「监视中」（%.2fs）" % gap2,
+           "实测 %.2fs" % gap2)
+    ok(calls["n"] == 3, "三态各探测一次（共 %d 次）" % calls["n"], str(calls))
+    # 等待通道期间（None/PROXY_DOWN/CHANNEL_DOWN）都该用短超时
+    ok(timeouts == [2.0, 2.0, 2.0],
+       "等待通道期间探测统一用短超时 2s %s" % timeouts, str(timeouts))
+
+
 def test_panel_mapping():
     """日志 → 面板状态：这两条决定了用户看到什么。"""
     st = W.State({"wechat": "4.1.15.56", "wmpf": "25799", "wmpf_ok": True,
@@ -198,6 +261,7 @@ def test_panel_mapping():
 def main():
     print("=== loop 时序 ===")
     test_no_idle_wait_after_new_oid()
+    test_no_30s_after_spawn()
     test_oid_state_off_eventloop()
     test_panel_mapping()
     print("\n  %d 通过，%d 失败" % (PASS, FAIL))
