@@ -8,7 +8,7 @@ run_all.py — 一次性跑完所有可离线执行的测试
 三套：
   1. mux       多客户端 CDP 复用（id 去重/单播/广播/断线回收）      [需要 tsx]
   2. classify  授权触发判定 + URL 构造（纯函数）                    [纯 python]
-  3. signcore  签到核心契约：无时段闸门 / 空闲退避 / 幂等 / 401       [纯 python]
+  3. signcore  签到核心契约：固定间隔轮询 / 幂等 / 401               [纯 python]
   4. ui        面板布局对齐 / 日志→状态映射 / ANSI 定点重绘          [纯 python]
   5. setup     安装器：zip slip 防护 / 解码 / 失败识别               [纯 python]
 
