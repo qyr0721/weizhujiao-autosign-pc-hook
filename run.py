@@ -171,7 +171,7 @@ async def run(args, log, force_check=None):
         log("需要取号：%s" % ("没有号" if not cur else "当前号已 401"))
         if time.time() - last_try < args.cooldown and not force:
             left = int(args.cooldown - (time.time() - last_try))
-            log("  冷却中（防 a8key 重定向限流），%ds 后再试" % left)
+            log("  冷却 %ds，稍候再试" % left)
             if args.once:
                 return 4
             await asyncio.sleep(min(left, args.poll))
@@ -241,7 +241,7 @@ def main():
     ap.add_argument("--url", default=g.DEFAULT_URL)
     ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
     ap.add_argument("--poll", type=float, default=10.0)
-    ap.add_argument("--cooldown", type=float, default=300.0)
+    ap.add_argument("--cooldown", type=float, default=15.0)
     ap.add_argument("--observe", type=float, default=18.0)
     ap.add_argument("--check", action="store_true", help="只看状态")
     ap.add_argument("--once", action="store_true", help="跑一轮就退出（不常驻）")
