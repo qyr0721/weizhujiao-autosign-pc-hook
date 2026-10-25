@@ -108,44 +108,43 @@ hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版�
 
 ### 运行依赖
 
-`wxsign.exe` 已内嵌 Python 运行时，**无需安装 Python**。但其 hook 依赖 WMPFDebugger（基于 Node.js），
+程序已内嵌 Python 运行时，**无需安装 Python**。但其 hook 依赖 WMPFDebugger（基于 Node.js），
 因此仍需以下组件：
 
-| 组件 | 提供方 |
-|---|---|
-| 操作系统 | Windows x64 |
-| 微信 PC 4.1.15.56 | 使用者安装（发布页提供安装包），并关闭自动更新 |
-| Node.js 22+ | 由 `wxsign-setup.exe` 安装（便携版，仅置于程序目录） |
-| WMPFDebugger + tsx + frida | 由 `wxsign-setup.exe` 安装 |
-| Python 3.10+ | 仅源码运行方式需要 |
+| 组件 | 便携版 | 集成版 |
+|---|---|---|
+| 操作系统 Windows x64 | 必需 | 必需 |
+| 微信 PC 4.1.15.56 | 使用者安装，并关闭自动更新 | 同左 |
+| Node.js 22+ | 首次运行时从网络获取 | **已内置** |
+| WMPFDebugger + tsx + frida | 首次运行时从网络获取 | **已内置** |
+| 偏移配置 | 首次运行时探测生成 | **已内置** |
+| Python 3.10+ | 不需要（仅源码运行方式需要） | 不需要 |
 
-### 第一步：运行环境安装器
+### 版本选择
 
-```
-1. 运行 wxsign-setup.exe    安装并配置缺失组件
-2. 运行 wxsign.exe          启动自动签到
-```
+| 版本 | 文件 | 体积 | 联网 | 适用 |
+|---|---|---|---|---|
+| **集成版** | `wxsign-integrated.zip` | 约 111 MB（解压后约 300 MB） | **完全不需要** | 网络受限或希望解压即用的环境 |
+| **便携版** | `wxsign-portable.exe` | 约 9 MB | 首次运行需联网 | 可接受首次下载的环境 |
 
-`wxsign-setup.exe` 仅安装缺失组件，**不覆盖已存在的内容**。安装产物全部位于程序目录
-（`runtime\node`、`WMPFDebugger`），不写入注册表、不修改 PATH 环境变量、不改动系统配置。
+两者的签到逻辑完全一致，区别仅在运行环境的获取方式。
 
-安装步骤如下：
+**集成版**：解压后运行目录内的 `wxsign.exe` 即可，全程不访问网络。
+
+**便携版**：单个可执行文件，首次启动时检测缺失组件并自动部署，之后直接使用已部署的内容，
+不会重复下载。部署过程如下：
 
 ```
 Node 运行时      下载便携版压缩包并解压至 runtime\node，不写入系统目录
-WMPFDebugger     使用 git clone；未安装 git 时改用 codeload 压缩包
+WMPFDebugger     使用 git clone；未检测到 git 时改用 codeload 压缩包
 依赖 tsx / frida 执行 npm install（frida 预编译绑定约 130 MB）
 偏移配置         执行一次 --auto-detect 并将结果写入 frida\config\win32\
 ```
 
-> 偏移配置步骤要求微信处于运行状态（需附加至进程进行扫描）。若微信未启动，该步骤将失败，
-> 启动微信后重新运行安装器即可。`wxsign.exe` 在检测到配置缺失时亦会自动附加 `--auto-detect` 参数。
+> 偏移配置步骤要求微信处于运行状态（需附加至进程进行扫描）。若当时微信未启动，该步骤会失败，
+> 但不会阻止运行：程序在检测到配置缺失时会自动附加 `--auto-detect` 参数，仅每次启动多耗时约 10 秒。
 
-安装器支持以下参数：
-
-```bat
-wxsign-setup.exe --check      仅执行环境检测，不安装
-```
+部署产物全部位于程序目录（`runtime\node`、`WMPFDebugger`），不写入注册表、不修改 PATH 环境变量。
 
 如需复用系统中已存在的组件，可通过环境变量指定路径：
 
@@ -154,23 +153,19 @@ set WZ_WMPF_DIR=D:\tools\WMPFDebugger
 set WZ_NODE=C:\Program Files\nodejs\node.exe
 ```
 
-### 第二步：启动签到程序
+禁用自动部署：
 
-**方式一：使用可执行文件（无需安装 Python）**
-
-从 [Releases](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases) 下载
-`wxsign-setup.exe` 与 `wxsign.exe`，置于**同一目录**，然后依次运行：
-
-```
-1. wxsign-setup.exe     配置运行环境（仅首次需要）
-2. wxsign.exe           启动自动签到
+```bat
+wxsign-portable.exe --no-setup
 ```
 
-`wxsign.exe` 启动后依次执行环境自检、启动调试代理并显示运行状态：
+### 启动签到程序
+
+程序启动后依次执行环境自检、启动调试代理并显示运行状态：
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  微助教自动签到  v1.2                                    │
+│  微助教自动签到  v1.3                                    │
 │  by qyr0721                                              │
 │  github.com/qyr0721/weizhujiao-autosign-pc-hook          │
 └──────────────────────────────────────────────────────────┘
@@ -241,9 +236,9 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 | 路径 | 说明 |
 |---|---|
 | `run.py` / `start.bat` | 主入口：代理守护、通道守护、凭证获取与签到调度 |
-| `wizard.py` | 启动器源码（`wxsign.exe`） |
-| `setup.py` | 环境安装器源码（`wxsign-setup.exe`） |
-| `uikit.py` | 两个可执行文件共用的终端渲染与系统探测模块 |
+| `wizard.py` | 主程序源码（便携版与集成版共用） |
+| `installer.py` | 环境部署模块，由主程序在检测到组件缺失时调用 |
+| `uikit.py` | 主程序与部署模块共用的终端渲染与系统探测 |
 | `signcore.py` | 签到核心：轮询、提交、幂等判定、GPS |
 | `signer/sign_pc.py` | 签到命令行入口（`signcore` 封装） |
 | `get_openid.py` | 凭证获取：多策略触发（S0/S3/S1/S2）与落点捕获 |
