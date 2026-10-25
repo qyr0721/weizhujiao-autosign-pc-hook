@@ -37,7 +37,7 @@
 | 端口 | 协议 | 方向 |
 |---|---|---|
 | 9421 | protobuf `WARemoteDebug` | 小程序连进来（硬编码） |
-| 62000 | 明文 CDP | 我们连出去 |
+| 62000 | 明文 CDP | 本项目作为客户端连入 |
 
 **这决定了通道的生命周期**：patch 写在「那一次小程序启动」的 config 结构体里，
 所以 9421 上的连接就是小程序的命脉——代理一断，微信立刻把它关掉；它也不会自动重连。
@@ -127,7 +127,7 @@ Page.navigate -> net::ERR_ABORTED        ← 被 Redirect 接管，不是失败
 
 ---
 
-## 6. 需要记住的坑
+## 6. 使用限制与风险
 
 1. **a8key 有重定向限流**（`wechat_redirect limit reached, cancelling navigation`）。
    触发要带 cooldown，别循环重试。
