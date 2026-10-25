@@ -14,7 +14,6 @@
 | 幂等提交 | `repeat sign in` / `已经签到` / `errorCode 305` 均判定为已签到，不重复提交 |
 | 多课程 | 依据接口返回内容处理，无需预先配置课程标识 |
 | GPS 签到 | `isGPS` 为真时按 `jitter_deg` 对经纬度施加抖动后提交 |
-| 空闲降频 | 无进行中签到时轮询间隔降为 30 秒，出现签到后恢复 5 秒；判定依据为服务端返回，不依赖本地时间 |
 | 进程自愈 | 签到进程异常退出后由主循环重新获取凭证并拉起 |
 
 ---
@@ -211,7 +210,7 @@ start.bat                 # 常驻运行（凭证获取与签到同时进行）
 
 ```bash
 cp signer/config.example.json signer/config.json
-# 配置 lat / lon（GPS 签到）、poll、idle_poll / idle_after
+# 配置 lat / lon（GPS 签到）、poll
 ```
 
 > `signer/config.json` 已列入 `.gitignore`，不会被提交。
@@ -245,7 +244,7 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 | `wizard.py` | 启动器源码（`wxsign.exe`） |
 | `setup.py` | 环境安装器源码（`wxsign-setup.exe`） |
 | `uikit.py` | 两个可执行文件共用的终端渲染与系统探测模块 |
-| `signcore.py` | 签到核心：轮询、提交、幂等判定、GPS 与空闲退避 |
+| `signcore.py` | 签到核心：轮询、提交、幂等判定、GPS |
 | `signer/sign_pc.py` | 签到命令行入口（`signcore` 封装） |
 | `get_openid.py` | 凭证获取：多策略触发（S0/S3/S1/S2）与落点捕获 |
 | `channel_keeper.py` | 三态探测（代理未运行 / 通道断开 / 可用）与代理托管 |
