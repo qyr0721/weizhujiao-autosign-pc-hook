@@ -422,7 +422,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
     ap.add_argument("--watch", action="store_true", help="常驻：通道一就绪就取号")
     ap.add_argument("--poll", type=float, default=10.0, help="watch 模式下探测间隔")
-    ap.add_argument("--cooldown", type=float, default=600.0, help="两次触发的冷却秒数（防限流）")
+    ap.add_argument("--cooldown", type=float, default=15.0, help="两次触发的冷却秒数")
     ap.add_argument("--force", action="store_true", help="即使当前号未被 401 也强制续号（会顶掉旧号）")
     ap.add_argument("--from-sign", action="store_true",
                     help="用签到页本身当靶子（跳过 S0，直接导航去换新号）")
