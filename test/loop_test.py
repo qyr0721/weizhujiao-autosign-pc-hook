@@ -270,6 +270,45 @@ def test_pick_tab_rejects_internal_pages():
     ok(g.pick_tab([])[0] is None, "无页面时返回 None", str(g.pick_tab([])))
 
 
+def test_reject_preexisting_oid():
+    """观察窗口不许把「导航前页面 URL 里残留的旧号」当成新号。
+
+    实测（wxsign-20261025-175329.log）：选中签到页时 URL 里已经带着
+    openid=X，S3 一触发就扫描，同一秒就"抓到"X —— 那是旧 URL 的残留，
+    不是 OAuth 结果。写入后签到侧几秒就 401，又取号，又选中同一个页面，
+    又扫到残留号……每 10 秒空转一圈（"不停的换号"）。
+
+    修法：导航前把所有已存在的 openid 记成 known，观察窗口只认不在
+    known 里的号。
+    """
+    OLD = "a" * 32
+    NEW = "b" * 32
+
+    targets = [
+        {"targetId": "t1", "url": "https://x/sign?openid=" + OLD},
+        {"targetId": "t2", "url": "https://app.teachermate.com.cn/wechat-pro-ssr/student/sign"},
+    ]
+
+    # 1. exclude 为集合：残留旧号被跳过
+    oid, where = g.scan_targets_for_oid(targets, exclude={OLD})
+    ok(oid is None, "已知的残留号不算新号", str((oid, where)))
+
+    # 2. 残留旧号 + 新号同时存在：只认新号
+    targets2 = targets + [{"targetId": "t3", "url": "https://x/sign?openid=" + NEW}]
+    oid, where = g.scan_targets_for_oid(targets2, exclude={OLD})
+    ok(oid == NEW, "跳过残留号，只认从没见过的新号", str(oid))
+
+    # 3. exclude 为空集合：两个都能中（默认行为不回归）
+    oid, _ = g.scan_targets_for_oid(targets2, exclude=set())
+    ok(oid in (OLD, NEW), "空排除集不改变原行为", str(oid))
+
+    # 4. exclude 仍兼容单个字符串（旧调用方）
+    oid, _ = g.scan_targets_for_oid(targets2, exclude=OLD)
+    ok(oid == NEW, "exclude 传单个字符串仍然工作", str(oid))
+    oid, _ = g.scan_targets_for_oid(targets2, exclude="")
+    ok(oid in (OLD, NEW), "exclude 传空串不误伤", str(oid))
+
+
 def test_panel_mapping():
     """日志 → 面板状态：这两条决定了用户看到什么。"""
     st = W.State({"wechat": "4.1.15.56", "wmpf": "25799", "wmpf_ok": True,
@@ -291,6 +330,7 @@ def main():
     test_no_30s_after_spawn()
     test_oid_state_off_eventloop()
     test_pick_tab_rejects_internal_pages()
+    test_reject_preexisting_oid()
     test_panel_mapping()
     print("\n  %d 通过，%d 失败" % (PASS, FAIL))
     if os.path.exists(OUT):
