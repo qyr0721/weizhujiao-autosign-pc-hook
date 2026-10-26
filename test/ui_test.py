@@ -104,6 +104,63 @@ def test_first_run_auth_hint():
     ok("等待取号" in st3.info["action"], "已授权后仍是「等待取号」", st3.info["action"])
 
 
+def test_config_bootstrap():
+    """从 GitHub 下载的包里没有 signer/config.json，程序必须自己生成。
+
+    否则用户根本不知道坐标该填在哪（这是真实反馈：下载后找不到配置文件）。
+    """
+    import json
+    import shutil
+    import tempfile
+
+    class Log:
+        def __init__(self):
+            self.lines = []
+
+        def write(self, m, tag=""):
+            self.lines.append(tag + str(m))
+
+    print("\n=== 配置文件自动生成 ===")
+
+    # 1. 什么都没有 → 生成 signer/config.json
+    d = tempfile.mkdtemp()
+    log = Log()
+    p = W._prepare_config(None, log, base=d)
+    ok(os.path.isfile(p), "自动生成配置文件", p)
+    ok(p.endswith(os.path.join("signer", "config.json")), "路径是 signer/config.json", p)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    ok(data.get("lat") is None and data.get("lon") is None, "模板里坐标为 null", str(data))
+    ok("jitter_deg" in data and "poll" in data, "模板含 jitter_deg / poll", str(data))
+    ok(any("已生成配置文件" in s for s in log.lines), "日志写明生成了文件", str(log.lines))
+
+    # 2. 已经存在 → 原样返回，不覆盖
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"lat": 30.5, "lon": 120.5}, f)
+    p2 = W._prepare_config(None, log, base=d)
+    with open(p2, encoding="utf-8") as f:
+        again = json.load(f)
+    ok(p2 == p and again["lat"] == 30.5, "已存在时不被覆盖", str(again))
+
+    # 3. 只有同级 config.json → 用它
+    d2 = tempfile.mkdtemp()
+    root_cfg = os.path.join(d2, "config.json")
+    with open(root_cfg, "w", encoding="utf-8") as f:
+        json.dump({"lat": 31.1, "lon": 121.1}, f)
+    p3 = W._prepare_config(None, log, base=d2)
+    ok(p3 == root_cfg, "识别程序目录下的 config.json", p3)
+    ok(not os.path.isdir(os.path.join(d2, "signer")), "不再重复造 signer 目录")
+
+    # 4. 显式指定的路径优先
+    d3 = tempfile.mkdtemp()
+    custom = os.path.join(d3, "my.json")
+    p4 = W._prepare_config(custom, log, base=d3)
+    ok(p4 == custom and os.path.isfile(custom), "显式路径优先且会创建", p4)
+
+    for x in (d, d2, d3):
+        shutil.rmtree(x, ignore_errors=True)
+
+
 def main():
     term = U.Term(plain=True)
     panel = W.Panel(term)
@@ -233,6 +290,7 @@ def main():
     ok(diff.count("微助教自动签到") == 0, "只重画变化的行，标题不重画", repr(diff[:60]))
 
     test_first_run_auth_hint()
+    test_config_bootstrap()
 
     print("\n%d 通过，%d 失败" % (PASS, FAIL))
     return 0 if FAIL == 0 else 1
