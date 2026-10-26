@@ -327,4 +327,4 @@ python tools/pe_scan.py "<路径>\flue.dll" \
 ---
 
 ## 致谢
-- 上游项目与贡献者：**evi0s/WMPFDebugger** 及其全部贡献者。
+- 上游项目与贡献者：[evi0s/WMPFDebugger](https://github.com/evi0s/WMPFDebugger) 及其全部贡献者。
