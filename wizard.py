@@ -175,8 +175,10 @@ class State:
     def __init__(self, info):
         self.info = dict(info)
         self.channel = False
-        self.hint_idle = ["在微信打开「小程序」面板，搜索「小程序示例」",
-                          "微信官方示例，体积很小；打开后可缩到后台"]
+        # 实测：从搜索打开的小程序不进调试态，9421 收不到连接。
+        # 必须从「最近使用 / 我的常用」列表点开（等同从聊天里点卡片）。
+        self.hint_idle = ["在微信「小程序」面板的「最近使用」或「我的常用」里点开",
+                          "不要用搜索打开——搜索启动的实例检测不到"]
         self.hint_live = ["通道已建立，无需再操作",
                           "小程序可以缩到后台或最小化"]
         self.info["hint"] = self.hint_idle
@@ -320,6 +322,45 @@ AUTH_STEPS = [
     "3. 跳转到授权页后，点「确认授权」",
 ]
 
+# 从 GitHub 下载的包里没有 signer/ 目录，用户不知道该把 config.json 放哪。
+# 首次运行就地生成一份模板，改 lat / lon 两个数字即可。
+CONFIG_TEMPLATE = """{
+  "poll": 5,
+  "lat": null,
+  "lon": null,
+  "jitter_deg": 0.00003
+}
+"""
+
+
+def _prepare_config(path, log, base=None):
+    """确保配置文件存在，返回实际使用的路径。
+
+    顺序：显式指定的路径 → <程序目录>/signer/config.json → <程序目录>/config.json
+    都不存在时，在程序目录下生成 signer/config.json 模板。
+    """
+    if path is None:
+        path = os.path.join(base or HERE, "signer", "config.json")
+    if os.path.isfile(path):
+        return path
+
+    # 兼容：用户可能直接把 config.json 放在程序目录
+    alt = os.path.join(base or HERE, "config.json")
+    if os.path.isfile(alt):
+        return alt
+
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CONFIG_TEMPLATE)
+        log.write("已生成配置文件：%s" % path)
+        log.write("  要做 GPS 签到就改里面的 lat / lon（经纬度），改完重启本程序")
+    except OSError as exc:  # noqa: BLE001
+        log.write("配置文件创建失败（不影响普通签到）：%s" % exc)
+    return path
+
 
 # ================================================================ 签到线程
 class Signer:
@@ -442,7 +483,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="签到只打印不提交")
     ap.add_argument("--url", default=g.DEFAULT_URL)
     ap.add_argument("--out", default=os.path.join(HERE, "openid.txt"))
-    ap.add_argument("--config", default=os.path.join(HERE, "signer", "config.json"))
+    ap.add_argument("--config", default=None,
+                    help="配置文件路径（默认 <程序目录>/signer/config.json，不存在会自动生成）")
     ap.add_argument("--no-pause", action="store_true", help="退出时不等待回车")
     ap.add_argument("--no-setup", action="store_true", help="不自动部署环境")
     ap.set_defaults(with_sign=True)
@@ -533,7 +575,15 @@ def main():
 
     signer = None
     if args.with_sign:
-        cfg = signcore.load_cfg(args.config, warn=lambda m: log.write(m, "[cfg] "))
+        cfg_path = _prepare_config(args.config, log)
+        cfg = signcore.load_cfg(cfg_path, warn=lambda m: log.write(m, "[cfg] "))
+        # 把实际生效的配置写进日志：用户能确认文件被读到、坐标有没有生效
+        lat, lon = cfg.get("lat"), cfg.get("lon")
+        if lat is None or lon is None:
+            log.write("配置：%s（未设坐标，GPS 签到不带位置）" % cfg_path)
+        else:
+            log.write("配置：%s（坐标 %.6f, %.6f，抖动 ±%s）"
+                      % (cfg_path, float(lat), float(lon), cfg.get("jitter_deg", 0)))
         if args.dry_run:
             cfg["submit"] = False
         signer = Signer(args.out, cfg, lambda m: _on_event(m, state, panel, log))
