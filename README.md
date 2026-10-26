@@ -273,7 +273,7 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 
 #### 打开顺序：先搜到它，再从「最近使用」点开
 
-![从最近使用打开小程序](docs/img/miniapp-open-from-recent.png)
+<img src="docs/img/miniapp-open-from-recent.png" width="520" alt="从最近使用打开小程序">
 
 ```
 ① 在微信顶部搜索框搜到目标小程序
