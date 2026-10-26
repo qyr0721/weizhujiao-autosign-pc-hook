@@ -221,12 +221,42 @@ python run.py --check     # 检测代理、通道与当前凭证状态
 start.bat                 # 常驻运行（凭证获取与签到同时进行）
 ```
 
-可选配置项：
+### 配置文件（签到坐标等）
 
-```bash
-cp signer/config.example.json signer/config.json
-# 配置 lat / lon（GPS 签到）、poll
+配置文件名固定为 `config.json`，位置在**程序所在目录的 `signer` 子目录**：
+
+| 运行方式 | 配置文件路径 |
+|---|---|
+| 便携版 `wxsign-portable.exe` | 与 exe 同级的 `signer\config.json` |
+| 集成版 `wxsign\wxsign.exe` | `wxsign\signer\config.json`（解压目录内） |
+| 源码运行 | 仓库根目录的 `signer\config.json` |
+
+目录或文件不存在时使用默认值（坐标为空）。手动创建即可，内容：
+
+```json
+{
+  "poll": 5,
+  "lat": 30.123456,
+  "lon": 120.123456,
+  "jitter_deg": 0.00003
+}
 ```
+
+| 字段 | 说明 |
+|---|---|
+| `lat` / `lon` | 签到上报的经纬度。**只有 GPS 签到会用到**；留 `null` 则不发送坐标 |
+| `jitter_deg` | 坐标抖动幅度（度），默认 `0.00003` ≈ ±1.6 米，避免每次提交完全相同 |
+| `poll` | 轮询间隔（秒），默认 5 |
+
+**怎么取坐标**
+
+1. 打开 [腾讯坐标拾取器](https://lbs.qq.com/tool/getpoint/) 或高德坐标拾取器
+2. 搜索上课的教学楼/教室，点地图上的位置
+3. 复制显示的经纬度，依次填入 `lat`（纬度，较小，约 20–50）和 `lon`（经度，较大，约 75–135）
+4. 保存后**重启程序**（配置只在启动时读一次）
+
+> 坐标系用 **GCJ-02**（腾讯、高德都是）。百度地图拾取器给的是 BD-09，差几百米，需先转换。
+> 小数位保留 6 位即可（约 0.1 米精度），`lat` 和 `lon` 不要写反。
 
 > `signer/config.json` 已列入 `.gitignore`，不会被提交。
 
