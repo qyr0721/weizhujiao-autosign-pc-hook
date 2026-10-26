@@ -49,6 +49,61 @@ def base_info(**kw):
     return d
 
 
+def test_first_run_auth_hint():
+    """首次使用（还没有 openid）要在面板上提示手动授权。
+
+    实测：全新环境下微信里没有可复用的会话，取号永远失败，
+    面板只说「等待取号」用户不知道该干什么。必须在启动时就说清楚。
+    """
+    import shutil
+    import tempfile
+
+    print("\n=== 首次使用授权提示 ===")
+
+    # 1. 判断「有没有号」
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "openid.txt")
+    ok(W._has_valid_oid(p) is False, "文件不存在 → 需要授权")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("")
+    ok(W._has_valid_oid(p) is False, "空文件 → 需要授权")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("not-an-openid\n")
+    ok(W._has_valid_oid(p) is False, "格式不对 → 需要授权")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("60536dd83a0a067b61c3cf1eaa3a7cf9\n# url=...\n")
+    ok(W._has_valid_oid(p) is True, "32 位 hex → 已有号，不提示")
+    shutil.rmtree(d, ignore_errors=True)
+
+    # 2. 面板里出现三步
+    pnl = W.Panel(U.Term(plain=True))
+    rows = pnl.compose(base_info(need_auth=True, action="首次使用"))
+    text = "\n".join(rows)
+    ok("首次使用" in text, "need_auth 时显示首次使用标题")
+    ok("签到(C)" in text, "写明要点「签到(C)」")
+    ok("确认授权" in text, "写明要确认授权")
+    ok(sum(1 for r in rows if "1." in r or "2." in r or "3." in r) >= 3, "三步都在")
+
+    # 3. 有号时不显示
+    rows2 = pnl.compose(base_info(need_auth=False, action="监视中"))
+    ok("首次使用" not in "\n".join(rows2), "已有号时不显示授权提示")
+
+    # 4. 拿到号后自动撤掉
+    st = W.State(base_info(need_auth=True))
+    ok(st.info["need_auth"] is True, "初始需要授权")
+    st.feed("  ✔ 拿到新号（S3-Page.navigate）：60536dd83a0a067b61c3cf1eaa3a7cf9")
+    ok(st.info["need_auth"] is False, "拿到新号后提示消失")
+
+    # 5. 未授权时动作行要说清楚（[签到] 前缀走 _feed_sign）
+    st2 = W.State(base_info(need_auth=True))
+    st2.feed("  [签到] 还没有 openid，等续号侧产出")
+    ok("手动授权" in st2.info["action"], "未授权时说「等待手动授权」", st2.info["action"])
+
+    st3 = W.State(base_info(need_auth=False))
+    st3.feed("  [签到] 还没有 openid，等续号侧产出")
+    ok("等待取号" in st3.info["action"], "已授权后仍是「等待取号」", st3.info["action"])
+
+
 def main():
     term = U.Term(plain=True)
     panel = W.Panel(term)
@@ -176,6 +231,8 @@ def main():
     ok(same.count("│") == 0, "未变化时不重画任何行", repr(same[:40]))
     ok("第二步" in diff, "变化时画出新内容")
     ok(diff.count("微助教自动签到") == 0, "只重画变化的行，标题不重画", repr(diff[:60]))
+
+    test_first_run_auth_hint()
 
     print("\n%d 通过，%d 失败" % (PASS, FAIL))
     return 0 if FAIL == 0 else 1
