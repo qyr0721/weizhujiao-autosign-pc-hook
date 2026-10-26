@@ -67,6 +67,19 @@ class Panel:
         else:
             rows.append("  自检  " + t.c("异常", t.RED) + "  " + t.c(info["note"], t.DIM))
         rows.append("")
+
+        # 首次使用：微信里还没有可复用的会话，必须先手动授权一次。
+        # 只提示一次，拿到号之后 need_auth 会被清掉。
+        if info.get("need_auth"):
+            rows.append(t.c("  ⚠ 首次使用，需要先手动授权一次", t.YELLOW))
+            rows.append(t.c("    否则取不到凭证，会一直停在「等待取号」", t.YELLOW))
+            rows.append("")
+            for step in AUTH_STEPS:
+                rows.append("    " + step)
+            rows.append("")
+            rows.append(t.c("    完成后不必重启，程序会自动继续。", t.DIM))
+            rows.append("")
+
         rows.append(U.rule(t, INNER))
         rows.append("")
 
@@ -185,6 +198,13 @@ class State:
         self.info["hint"] = self.hint_live if up else self.hint_idle
         return True
 
+    def set_need_auth(self, need):
+        """拿到号之后把首次授权提示撤掉。"""
+        if self.info.get("need_auth") == need:
+            return False
+        self.info["need_auth"] = need
+        return True
+
     def feed(self, msg):
         """返回 True 表示面板需要重绘。"""
         m = msg.strip()
@@ -207,6 +227,7 @@ class State:
             self.set_action("等待小程序连接")
         elif "正常值守" in m:
             self.set_channel(True)
+            self.set_need_auth(False)
             oid = _oid_in(m)
             self.set_action("监视中" + (" · 号 %s" % oid[:8] if oid else ""))
         elif "需要取号" in m:
@@ -214,7 +235,11 @@ class State:
         elif "拿到新号" in m:
             oid = _oid_in(m)
             self.set_channel(True)
+            self.set_need_auth(False)
             self.set_action("换号成功" + (" · 号 %s" % oid[:8] if oid else ""))
+        elif "S0 命中" in m:
+            self.set_need_auth(False)
+            self.set_action("已取得凭证…")
         elif "本轮失败" in m:
             self.set_action("取号失败，稍后重试")
         elif "冷却中" in m:
@@ -226,13 +251,25 @@ class State:
         elif "查询失败" in m:
             self.set_action("查询失败，重试中…")
         elif "还没有 openid" in m:
-            self.set_action("等待取号…")
+            # 首次使用且尚未授权时，别只说「等待取号」——用户不知道该干什么
+            if self.info.get("need_auth"):
+                self.set_action("等待手动授权（见上方步骤）")
+            else:
+                self.set_action("等待取号…")
         else:
             return False
         return True
 
     def _feed_sign(self, m):
         now = time.strftime("%H:%M:%S")
+        # 签到侧的日志都带 [签到] 前缀，所以「还没有 openid」只会走到这里。
+        # 首次使用时要明确告诉用户去手动授权，而不是干等。
+        if "还没有 openid" in m:
+            if self.info.get("need_auth"):
+                self.set_action("等待手动授权（见上方步骤）")
+            else:
+                self.set_action("等待取号…")
+            return True
         # 401 / 失效要先判：它的文本里不会出现"签到成功"，但可能带 signId
         if "失效" in m or "401" in m:
             if self.channel:
@@ -260,6 +297,28 @@ def _oid_in(text):
     import re
     m = re.search(r"\b([0-9a-f]{32})\b", text)
     return m.group(1) if m else ""
+
+
+def _has_valid_oid(path):
+    """openid.txt 里是否已有一个 32 位 hex 的号。
+
+    用来判断「首次使用」：没有号就说明这台机器还没完成过那次手动授权，
+    微信客户端里没有可复用的会话，程序再怎么取号也拿不到。
+    """
+    import re
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            first = f.readline().strip()
+    except OSError:
+        return False
+    return bool(re.fullmatch(r"[0-9a-f]{32}", first))
+
+
+AUTH_STEPS = [
+    "1. 打开微信「微助教服务号」，找到老师发的签到通知",
+    "2. 右键点击通知卡片，在弹出菜单中点「签到(C)」",
+    "3. 跳转到授权页后，点「确认授权」",
+]
 
 
 # ================================================================ 签到线程
@@ -394,11 +453,17 @@ def main():
     panel = Panel(term)
 
     info, fixes, wmpf_dir, node = preflight()
+    # 没有号 = 这台机器还没完成过那次手动授权。取号本身依赖微信客户端里
+    # 已有的会话，没有它再怎么点也拿不到，所以启动就要说清楚。
+    info["need_auth"] = not _has_valid_oid(args.out)
 
     ck.OUT = lambda m: log.write(m, "[ck] ")
 
     state = State(info)
-    state.set_action("环境自检完成" if info["ok"] else "环境未就绪")
+    if info["need_auth"] and info["ok"]:
+        state.set_action("首次使用——按上方步骤在微信里授权一次")
+    else:
+        state.set_action("环境自检完成" if info["ok"] else "环境未就绪")
     # 代理输出同时喂给面板：hook 注入有最长约 12 秒的窗口（--auto-detect），
     # 这期间打开小程序连不上，必须让面板说清楚「什么时候才能开」。
     ck.ProxySupervisor.SINK = lambda line: _on_event("[proxy] " + line, state, panel, log)
@@ -411,9 +476,23 @@ def main():
         print("微信 %s   ·   WMPF %s" % (info["wechat"], info["wmpf"]))
         print("自检  %s" % ("正常" if info["ok"] else "异常  " + info["note"]))
         print()
+        if info["need_auth"]:
+            print("⚠ 首次使用，需要先手动授权一次")
+            print("  否则取不到凭证，会一直停在「等待取号」")
+            print()
+            for step in AUTH_STEPS:
+                print("  " + step)
+            print()
+            print("  完成后不必重启，程序会自动继续。")
+            print()
     else:
         sys.stdout.write(term.clear_screen())
     panel.render(state.snapshot())
+
+    if info["need_auth"]:
+        log.write("首次使用：还没有 openid，需在微信里手动授权一次")
+        for step in AUTH_STEPS:
+            log.write("  " + step)
 
     log.write("=" * 56)
     log.write("%s %s  by %s" % (APP, VER, AUTHOR))
