@@ -138,7 +138,8 @@ async def run(args, log, force_check=None):
             if time.time() - last_down > 60:
                 last_down = time.time()
                 log("通道未就绪（%s）——微信里还没有小程序连上 9421。" % why)
-                log("  请在微信里打开任意小程序一次；连上后可以缩到后台不管。")
+                log("  请在微信「小程序」面板的「最近使用」或「我的常用」里点开一次。")
+                log("  不要用搜索打开——搜索启动的实例检测不到，连上后可缩到后台。")
                 if signer is None and args.with_sign:
                     log("  签到侧不受通道影响，照常工作。")
             # 签到不依赖通道，通道断时也要保证它在跑
