@@ -254,34 +254,6 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 2. 让小程序连上调试通道（见下方「打开顺序」）
 ```
 
-#### 打开顺序：先搜到它，再从「最近使用」点开
-
-<img src="docs/img/miniapp-open-from-recent.png" width="520" alt="从最近使用打开小程序">
-
-```
-① 在微信顶部搜索框搜到目标小程序
-      —— 这一步只是让它出现在「最近使用」列表里，不是让你在这里打开
-
-② 不要点搜索结果本身
-
-③ 回到「小程序」面板 →「最近使用」（或「我的常用」）→ 点那个图标打开
-```
-
-**为什么必须这样**：从搜索结果直接打开的小程序走的是另一条加载路径，不经过被 hook 的
-`OnLoadStart`，因此不会被写成调试态，9421 端口收不到连接，程序会一直停在
-「等待小程序连接」，看起来像「检测不到」。
-
-已经用搜索方式打开的实例**不会自愈**——必须先关掉它，再按上面的顺序重开。
-微信顶部的搜索框、「搜一搜」都算搜索。
-
-建议用微信官方的「小程序示例」：它默认就在「最近使用」里，体积小、启动快、长期可用。
-
-> 微信文章页与公众号页面不属于小程序，不会触发 WMPF 运行时初始化，无法替代。
-
-> **注意**：小程序以调试模式启动（`scene=1101`、`remoteDebugMode=1`），  
-> 9421 端口上的 WebSocket 连接为其生命周期所依赖。终止调试代理将导致微信立即关闭该小程序，  
-> 因此本项目退出时不会关闭代理进程。
-
 #### 一直显示「等待小程序连接」怎么办
 
 按顺序排查：
@@ -320,31 +292,6 @@ python tools/verify_bundle.py dist/wxsign-portable.exe   # 确认 exe 里装的�
 推送 `v*` tag 会触发 `.github/workflows/release.yml`：在 Windows runner 上装依赖、
 跑离线测试、构建便携版、校验 PYZ 内容，最后用仓库自带的 `GITHUB_TOKEN` 创建
 Release 并上传 exe。集成版体积大且依赖本机组件，需本地构建后手动补传。
-
-## 目录结构
-
-| 路径                                             | 说明                                                                      |
-| ---------------------------------------------- | ----------------------------------------------------------------------- |
-| `run.py` / `start.bat`                         | 主入口：偏移自愈、代理守护、通道守护、凭证获取与签到调度                                             |
-| `offsets.py`                                   | 偏移版本自适应：版本/指纹判定、`--auto-detect` 探测、失效标记与写回、a8key 重扫 CLI          |
-| `build.py`                                     | 发布构建：便携版 exe / 集成版 zip                                                    |
-| `.github/workflows/release.yml`                | 推 tag 后自动构建、校验并发布 Release                                                |
-| `wizard.py`                                    | 主程序源码（便携版与集成版共用）                                                        |
-| `installer.py`                                 | 环境部署模块，由主程序在检测到组件缺失时调用                                                  |
-| `uikit.py`                                     | 主程序与部署模块共用的终端渲染与系统探测                                                    |
-| `signcore.py`                                  | 签到核心：轮询、提交、幂等判定、GPS                                                     |
-| `signer/sign_pc.py`                            | 签到命令行入口（`signcore` 封装）                                                  |
-| `get_openid.py`                                | 凭证获取：多策略触发（S0/S3/S1/S2）与落点捕获                                            |
-| `channel_keeper.py`                            | 三态探测（代理未运行 / 通道断开 / 可用）与代理托管                                            |
-| `cdp_sign_agent.py`                            | 最小 CDP 客户端（`Target.attachToTarget` 单标签页会话）                              |
-| `tools/pe_scan.py`                             | PE 静态分析：字符串、RIP 相对引用、`.pdata` 函数边界                                      |
-| `tools/probe_a8key.py` + `tools/hook_a8key.js` | a8key 导航拦截层观测                                                           |
-| `tools/trigger_oauth.py`                       | 授权触发方式验证（`href` / `open` / `nav`）                                       |
-| `tools/oid_probe.py`                           | openid 探测：单次校验、生命周期观测、签到页 SSR 校验                                        |
-| `tools/start_proxy.js`                         | 无终端环境下以脱离方式启动代理                                                         |
-| `patches/proxy-mux.ts`                         | CDP 代理多客户端复用（请求 id 重写）                                                  |
-| `docs/`                                        | [`DESIGN.md`](docs/DESIGN.md) 实现机制；[`TESTING.md`](docs/TESTING.md) 测试说明 |
-| `test/`                                        | 离线测试（`python test/run_all.py`），含 `offsets_test.py` 版本自适应用例              |
 
 ---
 
