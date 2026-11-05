@@ -347,12 +347,32 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 
 ---
 
+## 构建与发布
+
+```bash
+pip install pyinstaller websockets
+python build.py portable       # dist/wxsign-portable.exe（单文件，首次运行联网部署）
+python build.py integrated     # dist/wxsign-integrated.zip（内置 Node/WMPFDebugger，离线）
+python build.py all
+
+python tools/verify_bundle.py dist/wxsign-portable.exe   # 确认 exe 里装的是当前源码
+```
+
+集成版需要本机已有完整 Node 便携目录和 `npm install` 过的 WMPFDebugger，
+可用 `--node-dir` / `--wmpf-dir` 指定；缺失组件不会硬塞进包，构建日志会写明。
+
+推送 `v*` tag 会触发 `.github/workflows/release.yml`：在 Windows runner 上装依赖、
+跑离线测试、构建便携版、校验 PYZ 内容，最后用仓库自带的 `GITHUB_TOKEN` 创建
+Release 并上传 exe。集成版体积大且依赖本机组件，需本地构建后手动补传。
+
 ## 目录结构
 
 | 路径                                             | 说明                                                                      |
 | ---------------------------------------------- | ----------------------------------------------------------------------- |
 | `run.py` / `start.bat`                         | 主入口：偏移自愈、代理守护、通道守护、凭证获取与签到调度                                             |
 | `offsets.py`                                   | 偏移版本自适应：版本/指纹判定、`--auto-detect` 探测、失效标记与写回、a8key 重扫 CLI          |
+| `build.py`                                     | 发布构建：便携版 exe / 集成版 zip                                                    |
+| `.github/workflows/release.yml`                | 推 tag 后自动构建、校验并发布 Release                                                |
 | `wizard.py`                                    | 主程序源码（便携版与集成版共用）                                                        |
 | `installer.py`                                 | 环境部署模块，由主程序在检测到组件缺失时调用                                                  |
 | `uikit.py`                                     | 主程序与部署模块共用的终端渲染与系统探测                                                    |

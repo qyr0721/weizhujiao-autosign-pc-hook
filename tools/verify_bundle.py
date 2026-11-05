@@ -50,10 +50,16 @@ def main():
     # 用官方的 open_embedded_archive 打开内嵌 PYZ，别自己拼 BytesIO
     za = ca.open_embedded_archive(pyz_name)
 
-    # 该有的新符号：修这个 10s 空等时加的
+    # 该有的符号：保留历史回归项，加上本次「版本自适应」新增的关键入口。
+    # 命中这些才能证明 exe 里是新代码，而不是上一次的缓存产物。
+    # 注意入口脚本 wizard.py 被 PyInstaller 放在 CArchive 顶层（type 's'），
+    # 不是 PYZ 条目，这里只验被 import 的模块，别把入口名列进来。
     want = {
         "get_openid": "oid_state_async",
-        "run": "oid_state_async",
+        "run": "_startup_offsets",
+        "offsets": "recover_if_needed",
+        "channel_keeper": "refresh_args",
+        "installer": "write_config",
     }
     bad = 0
     for mod, sym in sorted(want.items()):

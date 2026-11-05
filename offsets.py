@@ -493,6 +493,11 @@ def rescan_a8key(version=None, dll=None, out=None, log=None, timeout=300):
     所以不塞进启动流程；由 CLI 或版本变化后按需显式调用。
     """
     log = log or log_noop
+    if getattr(sys, "frozen", False):
+        # exe 里 sys.executable 是 wxsign.exe 而不是 python，
+        # 拿它去跑 pe_scan.py 只会把自己又启动一遍。
+        return False, None, ("打包版 exe 不支持该命令；请用源码运行 "
+                            "python offsets.py --rescan-a8key")
     version = version or active_version()
     if not version:
         return False, None, "未检测到 WMPF 运行时"
