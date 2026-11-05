@@ -43,7 +43,7 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 [取号]  解析目标 URL 中的 openid，交由签到模块使用
 ```
 
-机制细节与实测数据见 [`docs/DESIGN.md`](docs/DESIGN.md)。  
+机制细节与实测数据见 [docs/DESIGN.md](docs/DESIGN.md)。  
 调试通道基于 [evi0s/WMPFDebugger](https://github.com/evi0s/WMPFDebugger)（通过 frida hook `flue.dll`），  
 本项目为其下游应用，并附带一个多客户端复用补丁。
 
