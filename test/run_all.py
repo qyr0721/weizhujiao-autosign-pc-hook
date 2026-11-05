@@ -24,6 +24,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
+# Windows 控制台默认 GBK、CI runner 默认 cp1252，直接 print 中文测试名会
+# UnicodeEncodeError 崩掉整套测试（GitHub Actions 上 1 秒失败就是这个）。
+# 统一成 UTF-8；subprocess 启动的子进程在 run() 里单独传环境变量。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
 # 可用环境变量覆盖，避免把作者机器路径写死
 WMPF = os.environ.get("WZ_WMPF_DIR") or os.path.join(os.path.dirname(ROOT), "WMPFDebugger")
 NODE = os.environ.get("WZ_NODE", "node")
@@ -34,7 +43,10 @@ MUX_TEST = os.path.join(ROOT, "test", "mux_test.ts")
 def run(name, cmd, cwd):
     print("\n=== %s ===" % name)
     print("$ " + " ".join(cmd))
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True)
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, env=env)
     out = (r.stdout or b"").decode("utf-8", "replace")
     err = (r.stderr or b"").decode("utf-8", "replace")
     tail = "\n".join((out + err).strip().splitlines()[-4:])

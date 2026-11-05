@@ -17,6 +17,10 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      # runner 默认非 UTF-8，中文测试输出会让整套离线测试瞬间崩掉
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v4
 
