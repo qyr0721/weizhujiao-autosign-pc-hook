@@ -29,6 +29,7 @@ if FROZEN:
 import channel_keeper as ck          # noqa: E402
 import get_openid as g               # noqa: E402
 import installer                     # noqa: E402
+import offsets                       # noqa: E402
 import run as runmod                 # noqa: E402
 import signcore                      # noqa: E402
 import uikit as U                    # noqa: E402
@@ -121,31 +122,35 @@ class Panel:
 
 # ================================================================ 环境自检
 def preflight(base=HERE):
-    """返回 (info, fixes, wmpf_dir, node)。info 是面板需要的一切。"""
+    """返回 (info, fixes, wmpf_dir, node)。info 是面板需要的一切。
+
+    WMPF 版本只是偏移配置的文件名，不再是运行门槛：微信更新后由
+    offsets.py 自动探测新 RVA，所以「版本与内置基准不同」只记提示，
+    不算自检失败。以前这条会让 main() 直接退出，连自动探测都跑不到。
+    """
     procs = U.list_processes({"wechatappex.exe"})
     browsers = procs.get("wechatappex.exe") or []
 
     wx_ver, _ = U.wechat_version()
     vers = U.find_wmpf_versions()
     wmpf = vers[-1] if vers else None
-    wmpf_ok = (wmpf == U.KNOWN_VERSION)
+    wmpf_known = (wmpf == U.KNOWN_VERSION)
 
     # ck.DEFAULT_WMPF 带本机的兜底路径，源码运行时用得上；
     # 用 exe 的话，setup 会把 WMPFDebugger 装到 exe 同目录，同样能找到。
     wmpf_dir = U.resolve_wmpf_dir(base, extra=ck.DEFAULT_WMPF)
     node = U.resolve_node(base)
 
-    problems, fixes = [], []
+    problems, fixes, notes = [], [], []
     if not browsers:
         problems.append("微信未运行")
         fixes.append("先启动并登录微信 PC 版，然后再运行本程序")
     if not vers:
         problems.append("缺 WMPF 运行时")
-        fixes.append("微信未初始化 WMPF（随便打开一次小程序即可生成），或微信版本过旧")
-    elif not wmpf_ok:
-        problems.append("WMPF 版本不符")
-        fixes.append("当前 WMPF %s，本项目偏移基于 %s。请安装 Release 里的 "
-                     "WeChatWin_4.1.15.exe 并关闭自动更新" % (wmpf, U.KNOWN_VERSION))
+        fixes.append("微信未初始化 WMPF（随便打开一次小程序即可生成）")
+    elif not wmpf_known:
+        notes.append("WMPF %s 与内置基准 %s 不同，启动时将自动探测 hook 偏移"
+                     % (wmpf, U.KNOWN_VERSION))
     if not wmpf_dir:
         problems.append("缺 WMPFDebugger")
         fixes.append("缺少 WMPFDebugger 或其依赖，程序将尝试自动部署")
@@ -156,7 +161,8 @@ def preflight(base=HERE):
     info = {
         "wechat": wx_ver or "未检测到",
         "wmpf": str(wmpf) if wmpf else "未检测到",
-        "wmpf_ok": wmpf_ok,
+        "wmpf_ok": wmpf_known,   # 只决定版本行是否高亮，不影响自检结论
+        "notes": notes,
         "ok": not problems,
         "note": "全部就绪" if not problems else "、".join(problems),
         "action": "准备中…",
@@ -214,7 +220,19 @@ class State:
         if "[签到]" in m:
             return self._feed_sign(m)
 
-        if "auto-detecting hook offsets" in m:
+        # 版本变化 / 偏移自愈：面板要能区分「正在探测」和「探测完要重开小程序」
+        if "开始自动探测" in m or "正在探测 hook 偏移" in m:
+            self.set_action("检测到新版本，正在探测 hook 偏移…")
+        elif "hook 偏移已自动更新" in m or "hook 偏移已更新" in m:
+            self.set_action("偏移已更新，无需更换微信版本")
+        elif "重新打开一次小程序" in m:
+            self.set_channel(False)
+            self.set_action("偏移已更新，请重新打开小程序")
+        elif "自动探测失败" in m or "偏移探测失败" in m:
+            self.set_action("偏移探测失败，改用临时模式")
+        elif "运行中检测到偏移失效" in m:
+            self.set_action("偏移失效，正在自动重探…")
+        elif "auto-detecting hook offsets" in m:
             self.set_action("正在注入调试 hook…（约 10 秒，此期间勿开小程序）")
         elif "you can now open any miniapps" in m or "script loaded" in m:
             self.set_action("调试 hook 已注入，现在可以打开小程序")
@@ -449,27 +467,36 @@ def auto_setup(log, state, panel, term):
 
 # ================================================================ 偏移配置补全
 def _ensure_offsets_once(log, state, panel, wmpf_dir, node):
-    """缺偏移配置就补一次（非致命）。
+    """按当前 WMPF 版本补探测一次偏移（非致命）。
 
-    仓库自带的配置只覆盖旧版本；本机 WMPF 25799 没有配置时，代理会带
-    --auto-detect 启动，注入要多等约 12 秒，而且这 12 秒里打开小程序连不上。
-    所以启动时只要发现配置缺失就探测一次并写回，下次启动即可秒注入。
+    与 runmod.run 的启动自愈共用 offsets.recover_if_needed：这里先同步跑，
+    面板能显示「正在探测」；之后 run() 再查时状态已是 OK，不会重复探测。
+    微信未运行时跳过（auto-detect 要 attach 进程），交给上游临时模式兜底。
     """
     try:
-        st = installer.Setup(log, HERE, notify=lambda a, p="": None)
-        st.wmpf_dir = wmpf_dir
-        st.wmpf = str(U.find_wmpf_versions()[-1]) if U.find_wmpf_versions() else "未检测到"
-        st.node = node                      # 不设这个，join(cmd) 会炸在 None
-        cfg = st._offset_path()
-        if not cfg or os.path.isfile(cfg):
+        st = offsets.state(wmpf_dir)
+        if st["state"] == offsets.OK:
+            offsets.ensure_meta(st)   # 旧配置补上指纹元数据
+            return
+        if st["state"] == offsets.UNKNOWN:
             return
         if not U.list_processes({"wechatappex.exe"}):
-            log.write("偏移配置缺失，且微信未运行——本次将用 --auto-detect（注入慢约 12 秒）")
+            log.write("偏移需要更新但微信未运行——本次用 --auto-detect 临时模式")
             return
-        state.set_action("探测 hook 偏移（约 10 秒，仅首次）…")
+        state.set_action("WMPF %s 已变化，正在探测 hook 偏移（约 10 秒）…"
+                         % (st["version"] or "?"))
         panel.render(state.snapshot())
-        if st.ensure_offsets():
-            log.write("偏移配置已生成，下次启动注入更快")
+        result, ver, why = offsets.recover_if_needed(
+            wmpf_dir, node, log=log.write, timeout=90)
+        if result == "detected":
+            log.write("hook 偏移已自动更新：WMPF %s / %s" % (ver, why))
+            state.set_action("偏移已更新（WMPF %s）" % ver)
+        elif result == "failed":
+            log.write("自动探测失败：%s（将以 --auto-detect 临时模式运行）" % why)
+            state.set_action("偏移探测失败，改用临时模式")
+        else:
+            log.write("偏移状态：%s / %s" % (result, why))
+        panel.render(state.snapshot())
     except Exception as exc:  # noqa: BLE001
         log.write("补偏移配置失败（不影响运行）：%s" % exc)
 
@@ -487,7 +514,9 @@ def main():
                     help="配置文件路径（默认 <程序目录>/signer/config.json，不存在会自动生成）")
     ap.add_argument("--no-pause", action="store_true", help="退出时不等待回车")
     ap.add_argument("--no-setup", action="store_true", help="不自动部署环境")
-    ap.set_defaults(with_sign=True)
+    ap.add_argument("--no-auto-offsets", dest="auto_offsets", action="store_false",
+                    help="禁用 WMPF 版本变化时的自动偏移探测")
+    ap.set_defaults(with_sign=True, auto_offsets=True)
     args = ap.parse_args()
 
     term = U.Term(plain=args.plain, title="%s %s" % (APP, VER))
@@ -540,6 +569,8 @@ def main():
     log.write("%s %s  by %s" % (APP, VER, AUTHOR))
     log.write("微信 %s / WMPF %s / 自检 %s" % (info["wechat"], info["wmpf"], info["note"]))
     log.write("WMPFDebugger=%s  Node=%s" % (wmpf_dir or "-", node or "-"))
+    for note in info.get("notes", []):
+        log.write(note)
     log.write("=" * 56)
 
     if args.check:
@@ -563,11 +594,10 @@ def main():
         _finish(term, args, "请先处理上面的事项（或运行 wxsign-setup.exe）")
         return 1
 
-    # 偏移配置是「非致命」项——Node 与 WMPFDebugger 齐了 preflight 就算通过，
-    # 于是自动部署再也不会跑，ensure_offsets() 永远没机会执行，配置永远缺，
-    # 每次启动都要 --auto-detect（注入多等约 12 秒）。
-    # 这里只要配置缺失就单独补一次，失败不阻塞启动。
-    if not args.no_setup and wmpf_dir and node:
+    # 版本变化后单独补一次偏移探测（非致命，失败退回 --auto-detect 临时模式）。
+    # 这一步必须在 preflight 通过之后、主循环之前；旧版把版本不符当致命错误，
+    # 在这里之前就 return 1 了，探测代码永远执行不到。
+    if args.auto_offsets and wmpf_dir and node:
         _ensure_offsets_once(log, state, panel, wmpf_dir, node)
 
     state.set_action("启动签到服务…")
@@ -595,7 +625,7 @@ def main():
     ns = argparse.Namespace(
         url=args.url, out=args.out, poll=5.0, cooldown=0.0, observe=18.0,
         check=False, once=False, with_sign=False,
-        wmpf_dir=wmpf_dir, node=node,
+        wmpf_dir=wmpf_dir, node=node, auto_offsets=args.auto_offsets,
     )
 
     try:

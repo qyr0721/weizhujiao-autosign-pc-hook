@@ -17,12 +17,12 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import offsets  # noqa: E402
 import uikit as U  # noqa: E402
 
 NODE_FALLBACK = "22.20.0"
@@ -172,10 +172,11 @@ class Setup:
         self.by["deps"].state = "ok" if deps_ok else "pending"
         self.by["deps"].detail = "已安装" if deps_ok else "缺失"
 
-        cfg = self._offset_path()
-        cfg_ok = bool(cfg and os.path.isfile(cfg))
+        ost = offsets.state(self.wmpf_dir,
+                            version=(self.wmpf if self.wmpf != "未检测到" else None))
+        cfg_ok = ost["state"] == offsets.OK
         self.by["offsets"].state = "ok" if cfg_ok else "pending"
-        self.by["offsets"].detail = "已存在" if cfg_ok else "需探测一次"
+        self.by["offsets"].detail = "已存在" if cfg_ok else (ost["reason"] or "需探测一次")
 
         self.log.write("环境检测：微信=%s WMPF=%s Node=%s WMPFDebugger=%s 依赖=%s 偏移=%s"
                        % (self.wx_ver, self.wmpf, self.node or "-",
@@ -357,7 +358,11 @@ class Setup:
                             "win32", "addresses.%s.json" % self.wmpf)
 
     def ensure_offsets(self):
-        """仓库自带配置仅覆盖旧版本；新 WMPF 需探测一次并写回，否则每次启动都要重探。"""
+        """按当前 WMPF 版本探测一次并写回（与运行时自愈共用 offsets 模块）。
+
+        探测、限时、解析、原子写回、指纹元数据都在 offsets.py 里，
+        部署流程和运行时恢复用同一套代码，不会出现两份实现漂移。
+        """
         s = self.by["offsets"]
         cfg = self._offset_path()
         if not cfg:
@@ -365,6 +370,12 @@ class Setup:
             s.detail = "需先部署 WMPFDebugger"
             return False
         if os.path.isfile(cfg):
+            # 旧版程序生成的文件没有指纹元数据，补一份；之后同版本号下
+            # flue.dll 被替换时也能被感知到。
+            meta = cfg + offsets.META_SUFFIX
+            if not os.path.isfile(meta):
+                offsets.write_meta(meta, self.wmpf,
+                                   offsets.fingerprint(self.wmpf), "legacy")
             s.state = "ok"
             s.detail = "已存在"
             return True
@@ -375,69 +386,21 @@ class Setup:
             self.say("微信未运行，无法探测偏移")
             return False
 
-        tsx = os.path.join(self.wmpf_dir, "node_modules", "tsx", "dist", "cli.mjs")
-        entry = os.path.join(self.wmpf_dir, "src", "index.ts")
-        if not (os.path.isfile(tsx) and os.path.isfile(entry)):
-            s.state = "fail"
-            s.detail = "入口文件缺失"
-            return False
-
         s.state = "run"
         self.say("探测 hook 偏移（需微信运行，约 10 秒）…")
-        env = os.environ.copy()
-        if self.node:
-            env["PATH"] = os.path.dirname(self.node) + os.pathsep + env.get("PATH", "")
-        cmd = [self.node, tsx, entry, "--auto-detect"]
-        self.log.write("执行：%s" % " ".join(cmd))
-
-        found = ""
-        proc = None
-        try:
-            proc = subprocess.Popen(
-                cmd, cwd=self.wmpf_dir, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            deadline = time.time() + 90
-            while time.time() < deadline:
-                raw = proc.stdout.readline()
-                if not raw:
-                    if proc.poll() is not None:
-                        break
-                    time.sleep(0.2)
-                    continue
-                line = decode(raw).rstrip()
-                self.log.write(line, "[auto-detect] ")
-                if "detected hook offsets:" in line:
-                    found = line.split("detected hook offsets:", 1)[1].strip()
-                    break
-        except Exception as exc:  # noqa: BLE001
-            self.log.write("auto-detect 异常：%s" % exc)
-        finally:
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except Exception:  # noqa: BLE001
-                    proc.kill()
-
-        if not found:
+        data, why = offsets.detect(
+            self.node, self.wmpf_dir,
+            log=lambda m: self.log.write(m, "[auto-detect] "),
+            timeout=90, version=self.wmpf)
+        if not data:
+            self.log.write("偏移探测失败：%s" % why)
             s.state = "fail"
             s.detail = "探测失败"
             self.say("偏移探测失败")
             return False
-
         try:
-            data, _ = json.JSONDecoder().raw_decode(found)
-        except ValueError:
-            self.log.write("解析探测结果失败：%s" % found[:200])
-            s.state = "fail"
-            s.detail = "结果解析失败"
-            return False
-        try:
-            os.makedirs(os.path.dirname(cfg), exist_ok=True)
-            with open(cfg, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            offsets.write_config(cfg, data, cfg + offsets.META_SUFFIX,
+                                 self.wmpf, offsets.fingerprint(self.wmpf))
         except Exception as exc:  # noqa: BLE001
             self.log.write("写入配置失败：%s" % exc)
             s.state = "fail"

@@ -40,3 +40,6 @@ dist/
 
 # 扫描中间产物（可随时重跑 tools/pe_scan.py 生成）
 a8key_scan.json
+
+# 版本专属的 a8key 钩子表（由 python offsets.py --rescan-a8key 按本机版本生成）
+a8key_hooks.*.json

@@ -109,9 +109,11 @@ class ProxySupervisor:
     # 代理 stdout 逐行的去处。面板模式（wizard/exe）会替换成写日志。
     SINK = None
 
-    def __init__(self, wmpf_dir, node, extra_args=None):
+    def __init__(self, wmpf_dir, node, extra_args=None, version=None):
         self.wmpf_dir = wmpf_dir
         self.node = node
+        # version 只用于让上层/测试指定 WMPF 版本；None = 自动检测本机。
+        self.version = version
         self.extra = list(extra_args or [])
         # 兜底：WMPFDebugger 仓库自带配置只到旧版本，本机这个版本没有配置时
         # 必须加 --auto-detect，否则 frida 直接报 "version config not found"。
@@ -122,17 +124,36 @@ class ProxySupervisor:
         self.reported = False
 
     def _need_autodetect(self):
-        """本机 WMPF 版本没有对应偏移配置 → 需要 --auto-detect。"""
+        """当前 WMPF 版本没有可用偏移配置 → 需要 --auto-detect 临时兜底。
+
+        以前这里遍历所有已落地版本，只要有一个版本有配置就不加参数；
+        微信更新出新版本后反而会被旧配置误导。现在交给 offsets 按
+        「当前版本 + flue.dll 指纹」判定。
+        """
         try:
-            vers = find_wmpf_versions()
-            if not vers:
-                return False
-            cfg_dir = os.path.join(self.wmpf_dir, "frida", "config",
-                                   "win32" if sys.platform == "win32" else sys.platform)
-            return not any(os.path.isfile(os.path.join(cfg_dir, "addresses.%d.json" % v))
-                           for v in vers)
+            import offsets
+            return offsets.needs_runtime_autodetect(self.wmpf_dir,
+                                                    version=self.version)
         except Exception:  # noqa: BLE001
             return False
+
+    def refresh_args(self):
+        """偏移写回后重算启动参数：有配置了就不再每次多等约 10 秒。"""
+        self.extra = [a for a in self.extra if a != "--auto-detect"]
+        if self._need_autodetect():
+            self.extra.append("--auto-detect")
+        return self.extra
+
+    def restart(self):
+        """用新偏移重启自己托管的代理；外部代理不动，由调用方提示用户。"""
+        self.stop()
+        for _ in range(20):
+            if not port_open(CDP_PORT):
+                break
+            time.sleep(0.25)
+        self.refresh_args()
+        self.proc = None
+        return self.ensure()
 
     def ensure(self):
         if port_open(CDP_PORT):
@@ -156,16 +177,27 @@ class ProxySupervisor:
         )
         import threading
 
+        def emit(text):
+            sink = ProxySupervisor.SINK
+            if sink is not None:
+                sink(text)
+            else:
+                print("    | %s" % text, flush=True)
+
         def pump(pipe):
             for raw in iter(pipe.readline, b""):
                 line = raw.decode("utf-8", "replace").rstrip()
                 if not line:
                     continue
-                sink = ProxySupervisor.SINK
-                if sink is not None:
-                    sink(line)
-                else:
-                    print("    | %s" % line, flush=True)
+                # 偏移失效信号只落标记，不做重探：pump 是后台线程，
+                # 真正的「停代理 → 探测 → 重启」由主循环用 to_thread 执行。
+                try:
+                    import offsets
+                    offsets.observe_proxy_line(line, wmpf_dir=self.wmpf_dir,
+                                               log=emit)
+                except Exception:  # noqa: BLE001
+                    pass
+                emit(line)
 
         threading.Thread(target=pump, args=(self.proc.stdout,), daemon=True).start()
         # 等端口起来（frida attach 需要 2~8s）

@@ -26,8 +26,11 @@ VER = "v1.5"
 AUTHOR = "qyr0721"
 REPO = "github.com/qyr0721/weizhujiao-autosign-pc-hook"
 
-KNOWN_VERSION = 25799        # hook_a8key.js 内置 RVA 对应的 WMPF 版本
-KNOWN_WECHAT = "4.1.15.56"   # 与该 WMPF 版本配套的微信版本
+# 只是「内置 a8key 观测钩子 RVA」对应的基准版本，**不是运行门槛**。
+# 签到所需的 hook 偏移由 offsets.py 按当前 WMPF 版本自动探测，
+# 微信升级换版本不会让程序失效，preflight 也不再据此判定环境未就绪。
+KNOWN_VERSION = 25799
+KNOWN_WECHAT = "4.1.15.56"   # 与基准 WMPF 版本配套的微信版本（仅用于展示）
 WMPF_ROOT = os.path.join(os.environ.get("APPDATA", ""), "Tencent", "xwechat",
                          "xplugin", "plugins", "RadiumWMPF")
 

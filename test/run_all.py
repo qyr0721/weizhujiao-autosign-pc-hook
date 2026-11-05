@@ -12,8 +12,10 @@ run_all.py — 一次性跑完所有可离线执行的测试
   4. ui        面板布局对齐 / 日志→状态映射 / ANSI 定点重绘          [纯 python]
   5. installer 环境部署：zip slip 防护 / 解码 / 失败识别             [纯 python]
   6. loop      主循环时序：换号后不空等 / oid_state 不阻塞事件循环    [纯 python]
+  7. offsets   偏移版本自适应：版本/指纹变化、自动探测、失效兜底      [纯 python]
 
 不包含需要真实微信通道的部分（那需要一台装着微信的机器）。
+缺少可选依赖（tsx / mux_test.ts）的套会标成 SKIP，不算失败。
 """
 import os
 import subprocess
@@ -26,6 +28,7 @@ ROOT = os.path.dirname(HERE)
 WMPF = os.environ.get("WZ_WMPF_DIR") or os.path.join(os.path.dirname(ROOT), "WMPFDebugger")
 NODE = os.environ.get("WZ_NODE", "node")
 TSX = os.path.join(WMPF, "node_modules", "tsx", "dist", "cli.mjs")
+MUX_TEST = os.path.join(ROOT, "test", "mux_test.ts")
 
 
 def run(name, cmd, cwd):
@@ -43,25 +46,32 @@ def run(name, cmd, cwd):
 def main():
     results = []
 
-    if os.path.exists(TSX):
+    if os.path.exists(TSX) and os.path.isfile(MUX_TEST):
         results.append(("mux", run("mux_test", [NODE, TSX, "test/mux_test.ts"], WMPF)))
     else:
-        print("!! 跳过 mux_test：找不到 tsx（设 WZ_WMPF_DIR 指向 WMPFDebugger）")
-        results.append(("mux", False))
+        why = ("找不到 test/mux_test.ts（仓库未附带）" if not os.path.isfile(MUX_TEST)
+               else "找不到 tsx（设 WZ_WMPF_DIR 指向 WMPFDebugger）")
+        print("!! 跳过 mux_test：%s" % why)
+        results.append(("mux", None))
 
     results.append(("classify", run("classify_test", [sys.executable, "test/classify_test.py"], ROOT)))
     results.append(("signcore", run("signcore_test", [sys.executable, "test/signcore_test.py"], ROOT)))
     results.append(("ui", run("ui_test", [sys.executable, "test/ui_test.py"], ROOT)))
     results.append(("installer", run("installer_test", [sys.executable, "test/installer_test.py"], ROOT)))
     results.append(("loop", run("loop_test", [sys.executable, "test/loop_test.py"], ROOT)))
+    results.append(("offsets", run("offsets_test", [sys.executable, "test/offsets_test.py"], ROOT)))
 
     print("\n================ 汇总 ================")
-    bad = 0
-    for name, ok in results:
-        print("  %-10s %s" % (name, "PASS" if ok else "FAIL"))
-        if not ok:
+    bad, passed, skipped = 0, 0, 0
+    for name, res in results:
+        print("  %-10s %s" % (name, "SKIP" if res is None else ("PASS" if res else "FAIL")))
+        if res is None:
+            skipped += 1
+        elif res:
+            passed += 1
+        else:
             bad += 1
-    print("%d/%d 套通过" % (len(results) - bad, len(results)))
+    print("%d/%d 套通过，%d 套跳过" % (passed, len(results), skipped))
     return 0 if bad == 0 else 1
 
 

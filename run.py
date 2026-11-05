@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(HERE, "tools"))
 
 import channel_keeper as ck          # noqa: E402
 import get_openid as g               # noqa: E402
+import offsets                       # noqa: E402
 
 
 def ts():
@@ -67,9 +68,12 @@ BANNER = """
  代理：自动检查 / 拉起（已在跑就复用，不会重复注入）
  通道：需要一个微信小程序连着。若提示「通道未就绪」，在微信里
        打开任意小程序一次；连上后可缩到后台不管。
+ 偏移：WMPF 版本变化时自动重新探测 hook 偏移，不需要锁微信版本
  退出：Ctrl+C。退出不会关闭代理，小程序不受影响。
 ============================================================
 """
+
+OFFSET_RETRY_COOLDOWN = 30.0
 
 
 def has_sign_tab(targets):
@@ -77,8 +81,74 @@ def has_sign_tab(targets):
                and t.get("type") in ("page", "webview") for t in targets)
 
 
+async def _startup_offsets(args, log, sup):
+    """启动阶段自愈：微信更新换了 WMPF 版本，先探测再拉代理。
+
+    放在拉代理之前，避免两个 frida 进程同时 attach；探测是同步子进程，
+    用 to_thread 丢出事件循环，CDP 与面板不会卡住。
+    """
+    st = offsets.state(args.wmpf_dir)
+    if st["state"] == offsets.OK:
+        offsets.ensure_meta(st)   # 旧配置补上指纹，之后能感知同版本 dll 被替换
+        return
+    if st["state"] == offsets.UNKNOWN:
+        log("偏移自检：%s（本次跳过自动探测）" % st["reason"])
+        return
+    log("偏移自检：%s —— 开始自动探测（约 10 秒，此期间勿开小程序）" % st["reason"])
+    result, ver, why = await asyncio.to_thread(
+        offsets.recover_if_needed, args.wmpf_dir, args.node, log)
+    sup.refresh_args()
+    if result == "detected":
+        log("  ✔ WMPF %s 的 hook 偏移已自动更新：%s" % (ver, why))
+        if ck.port_open(ck.CDP_PORT):
+            log("  注意：已有调试代理在跑（仍是旧偏移），请结束该 node 进程后重启本程序")
+    elif result == "failed":
+        log("  ✘ 自动探测失败：%s" % why)
+        log("    仍会以 --auto-detect 临时模式启动，功能不受影响但每次多等约 10 秒")
+    else:
+        log("  偏移状态：%s / %s" % (result, why))
+
+
+async def _recover_offsets_runtime(args, log, sup, st):
+    """运行中失效自愈：代理日志明确报偏移错误后，重探并重启代理。
+
+    停代理会断开 9421，微信会关掉以调试态拉起的小程序，所以成功之后
+    必须提示用户重新打开一次；外部托管的代理不主动杀，只提示手动重启。
+    """
+    log("运行中检测到偏移失效（%s），自动重探" % st["reason"])
+    owned = sup.proc is not None and sup.proc.poll() is None
+    if owned:
+        sup.stop()
+        sup.proc = None
+        for _ in range(20):
+            if not ck.port_open(ck.CDP_PORT):
+                break
+            await asyncio.sleep(0.25)
+    result, ver, why = await asyncio.to_thread(
+        offsets.recover_if_needed, args.wmpf_dir, args.node, log)
+    sup.refresh_args()
+    if result == "detected":
+        log("  ✔ hook 偏移已更新（WMPF %s）" % ver)
+        if owned:
+            port_open_or_spawn(sup, log)
+            log("  调试代理已按新偏移重启；9421 曾断开，请重新打开一次小程序")
+        else:
+            log("  当前代理由外部托管，请手动重启它，新偏移才会生效")
+        log("  a8key 观测钩子如需同步更新：python offsets.py --rescan-a8key")
+    elif result == "defer":
+        log("  连续探测失败，改用上游 --auto-detect 兜底：%s" % why)
+    elif result == "failed":
+        log("  本轮探测失败：%s（%ds 后再试）"
+            % (why, int(OFFSET_RETRY_COOLDOWN)))
+
+
 async def run(args, log, force_check=None):
     sup = ck.ProxySupervisor(args.wmpf_dir, args.node)
+
+    # 只有正式入口（本文件的 main / wizard）显式开启；测试或直接构造
+    # Namespace 调用 run() 时默认不启用，避免打桩环境里跑去碰真实文件。
+    if getattr(args, "auto_offsets", False) and not args.check:
+        await _startup_offsets(args, log, sup)
 
     if not port_open_or_spawn(sup, log):
         return 3
@@ -90,11 +160,15 @@ async def run(args, log, force_check=None):
         print("proxy   : up (%s)" % ("own" if sup.proc else "external"))
         print("channel : %s (%s), targets=%d" % (state, why, len(targets)))
         print("openid  : %s  state=%s" % (cur or "(无)", st))
+        ost = offsets.state(args.wmpf_dir)
+        print("offsets : WMPF %s / %s (%s)"
+              % (ost["version"] or "?", ost["state"], ost["reason"]))
         return 0 if state == ck.CHANNEL_UP else 2
 
     last_down = 0.0
     last_beat = 0.0
     last_try = 0.0
+    last_offset_try = 0.0
     ticks = 0
     prev_state = None
     signer = None
@@ -103,6 +177,17 @@ async def run(args, log, force_check=None):
 
     while True:
         ticks += 1
+
+        # 偏移失效自愈：代理输出里的明确错误会落一个 stale 标记，
+        # 这里每 3 轮查一次（只是几次 stat，很便宜），带冷却避免反复探测。
+        # 通道抖动不写标记，所以「没从最近使用打开小程序」不会被误判成偏移坏掉。
+        if (getattr(args, "auto_offsets", False)
+                and ticks % 3 == 1
+                and time.time() - last_offset_try > OFFSET_RETRY_COOLDOWN):
+            ost = offsets.state(args.wmpf_dir)
+            if ost["state"] in (offsets.MISSING, offsets.STALE):
+                last_offset_try = time.time()
+                await _recover_offsets_runtime(args, log, sup, ost)
 
         # 签到侧监督：它只在 401 时才退出（code=2），此时立刻续号
         force = False
@@ -254,6 +339,9 @@ def main():
     ap.add_argument("--log", default=os.path.join(HERE, "run.log"))
     ap.add_argument("--wmpf-dir", default=ck.DEFAULT_WMPF)
     ap.add_argument("--node", default=ck.DEFAULT_NODE)
+    ap.add_argument("--no-auto-offsets", dest="auto_offsets", action="store_false",
+                    help="禁用 WMPF 版本变化时的自动偏移探测")
+    ap.set_defaults(auto_offsets=True)
     args = ap.parse_args()
 
     log = Log(args.log)

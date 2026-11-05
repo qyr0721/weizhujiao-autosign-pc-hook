@@ -29,6 +29,7 @@
 | 多课程    | 依据接口返回内容处理，无需预先配置课程标识                                     |
 | GPS 签到 | `isGPS` 为真时按 `jitter_deg` 对经纬度施加抖动后提交                     |
 | 进程保活   | 签到进程异常退出后由主循环重新获取凭证并拉起                                    |
+| 版本自适应 | 微信更新换了 WMPF 版本后，自动重探 hook 偏移并写回，无需降级或手工重扫          |
 
 ---
 
@@ -72,6 +73,7 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 日常使用
   运行 start.bat / wxsign.exe
     │
+    ├─ 偏移自检        当前 WMPF 版本的配置缺失/指纹不符 → 自动探测并写回
     ├─ 代理守护        确保 WMPFDebugger 运行并监听 9421 / 62000，已运行则复用
     ├─ 通道守护        检测小程序是否已连接调试通道
     │
@@ -86,23 +88,47 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 
 ---
 
-## 微信版本要求
+## 微信版本与偏移自适应
 
-hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版本严格绑定。
+**不再需要锁定微信版本。** 旧版把 WMPF `25799` 写成硬门槛，版本一变就报「环境未就绪」
+直接退出，连已经写好的自动探测都跑不到；现在版本只是偏移配置的文件名，启动时自动适配。
 
-| 项目         | 值                                                                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| 微信 PC      | **4.1.15.56**                                                                                                  |
-| WMPF 运行时   | **25799**                                                                                                      |
-| 安装包        | [`WeChatWin_4.1.15.exe`](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases/latest)（发布页附件，245 MB） |
-| 安装包 sha256 | `4422bad98617dd095005c7879b2190f188ffa9ad6abf79e075358cf981a3d9e4`                                             |
+| 项目 | 值 |
+| --- | --- |
+| 内置基准（仅用于展示/自检） | 微信 PC **4.1.15.56** / WMPF **25799** |
+| 实际支持 | 由 WMPFDebugger `--auto-detect` 探测当前 `flue.dll` 的 RVA，按版本写回 |
+| 安装包（想对齐基准时才用） | [`WeChatWin_4.1.15.exe`](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases/latest)，sha256 `4422bad98617dd095005c7879b2190f188ffa9ad6abf79e075358cf981a3d9e4` |
 
-`wxsign.exe --check` 会读取本机实际版本并与上述值比对，不一致时给出提示。
+自动适配流程（`offsets.py`）：
 
-### 关闭微信自动更新
+1. 读取本机当前 WMPF 版本，算 `flue.dll` 的轻量指纹（size + mtime，不读 237MB 算 hash）；
+2. 查 `WMPFDebugger/frida/config/win32/addresses.<版本>.json`：**缺失 / 配置损坏 /
+   指纹不符 / 上次留下 `*.stale` 标记** → 判定需要更新；
+3. 跑一次 `node .../tsx src/index.ts --auto-detect`，限时 90 秒，解析输出里的
+   `detected hook offsets: {...}`；
+4. 原子写回配置，并在 sidecar `.meta.json` 里记版本、指纹、来源与时间
+   （不改 WMPFDebugger 自己的配置格式）；
+5. 运行中若代理日志出现明确的偏移错误，主循环下一轮会「停代理 → 重探 → 按新偏移重启」。
+   通道抖动、`no-reply` 之类**不会**被误判，不会为了无关错误把小程序杀掉。
 
-微信升级会导致 WMPF 版本变化，使 `flue.dll` 中的函数偏移失效。轻则无法获取凭证，  
-重则 `Interceptor.replace` 写入错位地址并导致浏览器进程崩溃。因此应锁定版本。
+连续失败 2 次后停止反复重探，退回 WMPFDebugger 自带的 `--auto-detect` 临时模式
+（每次启动多等约 10 秒），程序仍可用。运行中重探需要停代理，9421 会短暂断开，
+**完成后请重新打开一次小程序**；启动时重探则完全无感。
+
+手工检查与强制重探：
+
+```bash
+python offsets.py --check            # 只看当前版本 / 指纹 / 配置状态
+python offsets.py --detect           # 强制重探主偏移（忽略失败次数）
+python offsets.py --rescan-a8key     # 更新调试观测用的 a8key RVA，见「版本适配」
+```
+
+源码运行与 exe 都可用 `--no-auto-offsets` 关闭自动适配。
+
+### 关闭微信自动更新（可选，非必需）
+
+锁版本现在只剩两个好处：省掉版本变化时那一次约 10 秒的启动探测，
+以及避免运行中重探后需要重新打开一次小程序。不锁也能正常签到。
 
 **方式一：通过设置关闭**
 
@@ -119,8 +145,8 @@ hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版�
   → 将 WeixinUpdate.exe 重命名为 WeixinUpdate.exe.bak
 ```
 
-> 若升级后仍需使用本项目：先以 `tools/pe_scan.py` 重新扫描 `flue.dll` 获取新的 RVA  
-> （参见「版本适配」），再更新 `tools/hook_a8key.js`。
+> 升级后主偏移会自动重探，无需手工干预。只有调试观测用的 a8key 钩子
+> （不参与签到）需要按需重扫，见「版本适配」。
 
 ---
 
@@ -137,7 +163,7 @@ hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版�
 | 微信 PC 4.1.15.56            | 使用者安装，并关闭自动更新  | 同左      |
 | Node.js 22+                | 首次运行时从网络获取     | **已内置** |
 | WMPFDebugger + tsx + frida | 首次运行时从网络获取     | **已内置** |
-| 偏移配置                       | 首次运行时探测生成      | **已内置** |
+| 偏移配置                       | 按当前 WMPF 版本自动探测生成（版本变化会自动重探） | 内置基准版本配置，其余版本自动探测 |
 | Python 3.10+               | 不需要（仅源码运行方式需要） | 不需要     |
 
 ### 版本选择
@@ -158,11 +184,12 @@ hook 中的 RVA 偏移依据 WMPF 运行时 `25799` 扫描获得，与微信版�
 Node 运行时      下载便携版压缩包并解压至 runtime\node，不写入系统目录
 WMPFDebugger     使用 git clone；未检测到 git 时改用 codeload 压缩包
 依赖 tsx / frida 执行 npm install（frida 预编译绑定约 130 MB）
-偏移配置         执行一次 --auto-detect 并将结果写入 frida\config\win32\
+偏移配置         按当前 WMPF 版本执行一次 --auto-detect，结果写入 frida\config\win32\addresses.<ver>.json
 ```
 
 > 偏移配置步骤要求微信处于运行状态（需附加至进程进行扫描）。若当时微信未启动，该步骤会失败，  
-> 但不会阻止运行：程序在检测到配置缺失时会自动附加 `--auto-detect` 参数，仅每次启动多耗时约 10 秒。
+> 但不会阻止运行：程序在检测到配置缺失时会自动附加 `--auto-detect` 参数，仅每次启动多耗时约 10 秒。  
+> 微信后续升级换了 WMPF 版本，也会走同一套自动重探，不需要重新部署或降级微信。
 
 部署产物全部位于程序目录（`runtime\node`、`WMPFDebugger`），不写入注册表、不修改 PATH 环境变量。
 
@@ -324,7 +351,8 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 
 | 路径                                             | 说明                                                                      |
 | ---------------------------------------------- | ----------------------------------------------------------------------- |
-| `run.py` / `start.bat`                         | 主入口：代理守护、通道守护、凭证获取与签到调度                                                 |
+| `run.py` / `start.bat`                         | 主入口：偏移自愈、代理守护、通道守护、凭证获取与签到调度                                             |
+| `offsets.py`                                   | 偏移版本自适应：版本/指纹判定、`--auto-detect` 探测、失效标记与写回、a8key 重扫 CLI          |
 | `wizard.py`                                    | 主程序源码（便携版与集成版共用）                                                        |
 | `installer.py`                                 | 环境部署模块，由主程序在检测到组件缺失时调用                                                  |
 | `uikit.py`                                     | 主程序与部署模块共用的终端渲染与系统探测                                                    |
@@ -340,7 +368,7 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 | `tools/start_proxy.js`                         | 无终端环境下以脱离方式启动代理                                                         |
 | `patches/proxy-mux.ts`                         | CDP 代理多客户端复用（请求 id 重写）                                                  |
 | `docs/`                                        | [`DESIGN.md`](docs/DESIGN.md) 实现机制；[`TESTING.md`](docs/TESTING.md) 测试说明 |
-| `test/`                                        | 离线测试（`python test/run_all.py`）                                          |
+| `test/`                                        | 离线测试（`python test/run_all.py`），含 `offsets_test.py` 版本自适应用例              |
 
 ---
 
@@ -362,16 +390,33 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 
 ## 版本适配
 
-`tools/hook_a8key.js` 中的 RVA 与 WMPF 版本严格绑定（内置 **25799**）。微信升级后需重新扫描：
+两套 RVA，别混在一起：
+
+| 用途 | 落点 | 版本变化后 |
+| --- | --- | --- |
+| 签到主流程（打通调试通道） | `WMPFDebugger/frida/config/win32/addresses.<ver>.json` | **自动**，由 `offsets.py` 调 `--auto-detect` 重探写回 |
+| 调试观测（看 a8key 导航拦截） | `a8key_hooks.<ver>.json` | 按需一条命令重扫；不影响签到 |
+
+`OnLoadStart` / `SendToClientFilter` 的偏移由 WMPFDebugger 的 `--auto-detect` 探测，
+程序启动前自动完成，也可 `python offsets.py --detect` 手动触发。
+
+a8key 观测钩子不参与签到，只供 `tools/probe_a8key.py` 观察 OAuth 被哪一层接管。
+它内置的是 25799 的 RVA；换版本后要生成新表才准。因为要静态分析 237MB 的
+`flue.dll`（可能几分钟），这一步**刻意不放进启动流程**：
 
 ```bash
+python offsets.py --rescan-a8key
+# 生成 a8key_hooks.<当前版本>.json，probe_a8key.py 会自动按版本加载它
+
+# 等价的底层命令（一般不用手输）：
 python tools/pe_scan.py "<路径>\flue.dll" \
   --kw "A8KeyNavigationThrottle::CheckURL" "open.weixin.qq.com" \
-  --json a8key_scan.json
+  --json a8key_hooks.<ver>.json
 ```
 
 `.pdata` 提供的函数边界较为准确，优于依据 `0xCC` 填充对齐进行推断。  
-`OnLoadStart` 偏移可使用 WMPFDebugger 的 `--auto-detect` 参数获取。
+`tools/hook_a8key.js` 只是 frida 脚本模板，配置由 `probe_a8key.py` 注入 `@@CONFIG@@`，
+不需要手工改里面的 RVA。
 
 ---
 

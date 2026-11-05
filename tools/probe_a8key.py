@@ -75,7 +75,9 @@ def find_browser_pid():
             return best, p.get("CommandLine") or ""
     return pids[0], ""
 
-# 来自 a8key_scan.json（flue.dll 25799）。换版本用 tools/pe_scan.py 重扫后替换。
+# 内置基准（flue.dll 25799）的 RVA。微信换版本后由
+# `python offsets.py --rescan-a8key` 生成 a8key_hooks.<ver>.json，
+# default_hooks_path() 会优先按当前版本加载，避免手工改这张表。
 DEFAULT_HOOKS = [
     {"rva": 0x025FE320, "name": "A8KeyThrottle::CheckURL", "kind": "fn"},
     {"rva": 0x025FEE99, "name": "mark:redirect_limit", "kind": "mark"},
@@ -98,6 +100,20 @@ DEFAULT_HOOKS = [
 ]
 
 COLORS = {"fn": "", "mark": "  "}
+
+
+def default_hooks_path():
+    """按当前 WMPF 版本找 offsets.py --rescan-a8key 生成的钩子表。"""
+    try:
+        import offsets
+        ver = offsets.active_version()
+        if ver:
+            p = offsets.a8key_hooks_path(ver)
+            if os.path.isfile(p):
+                return p
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def load_hooks(path):
@@ -148,7 +164,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--js", default=os.path.join(HERE, "hook_a8key.js"))
-    ap.add_argument("--hooks-json", default="", help="用 pe_scan 的 json 生成函数钩子")
+    ap.add_argument("--hooks-json", default=None,
+                    help="钩子表 json；默认按当前 WMPF 版本自动选 a8key_hooks.<ver>.json")
     ap.add_argument("--cdp-nav", default="", help="注入后主动让某标签页导航到此 URL")
     ap.add_argument("--match", default="", help="只选 URL 含此子串的标签页")
     ap.add_argument("--quiet", action="store_true")
@@ -161,6 +178,13 @@ def main():
     if cmd:
         print("    %s" % cmd[:130])
 
+    if args.hooks_json is None:
+        args.hooks_json = default_hooks_path()
+    if args.hooks_json:
+        print("[*] 使用当前版本的钩子表：%s" % args.hooks_json)
+    else:
+        print("[!] 当前 WMPF 版本没有 a8key 钩子表，沿用 25799 的内置 RVA；"
+              "若版本已变化请运行 python offsets.py --rescan-a8key")
     hooks = load_hooks(args.hooks_json)
     with open(args.js, "r", encoding="utf-8") as f:
         src = f.read()
