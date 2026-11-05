@@ -207,13 +207,7 @@ start.bat                 # 常驻运行（凭证获取与签到同时进行）
 
 配置文件名固定为 `config.json`，位置在**程序所在目录的 `signer` 子目录**：
 
-| 运行方式 | 配置文件路径 |
-|---|---|
-| 便携版 `wxsign-portable.exe` | 与 exe 同级的 `signer\config.json` |
-| 集成版 `wxsign\wxsign.exe` | `wxsign\signer\config.json`（解压目录内） |
-| 源码运行 | 仓库根目录的 `signer\config.json` |
-
-**首次运行程序会自动生成配置文件**（内容如下），只要把 `lat` / `lon` 改成自己的坐标即可。
+**首次运行程序会自动生成配置文件**，只需把 `lat` / `lon` 改成自己的坐标即可。
 也可以手动创建，或在程序目录直接放一个 `config.json`（会被自动识别）。
 
 | 字段 | 说明 |
