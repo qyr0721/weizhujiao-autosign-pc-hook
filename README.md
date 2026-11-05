@@ -9,6 +9,8 @@
 
 ### 我用deepseek生成了一个超级详细，3岁小孩也能懂的教程：[TUTORIAL.md](TUTORIAL.md)
 
+---
+
 ## 功能
 
 | 能力     | 说明                                                        |
