@@ -193,7 +193,7 @@ wxsign-portable.exe --no-setup
 
 > 可执行文件仅包含调度与签到逻辑，不含 WMPFDebugger 与微信安装包（后者见发布页附件）。
 
-**方式二：源码运行**
+**源码运行**
 
 ```bash
 git clone https://github.com/qyr0721/weizhujiao-autosign-pc-hook.git
@@ -234,7 +234,7 @@ start.bat                 # 常驻运行（凭证获取与签到同时进行）
 
 **如何获取坐标（实际上系统不会验证坐标数据）**
 
-1. 打开[高德坐标拾取器](https://gaode.com/ssr/coordinate-picker)，复制显示的经纬度，依次填入 `lat`（纬度）和 `lon`（经度），保存后**重启程序**（配置只在启动时读取一次）
+打开[高德坐标拾取器](https://gaode.com/ssr/coordinate-picker)，复制显示的经纬度，依次填入 `lat`（纬度）和 `lon`（经度），保存后**重启程序**（配置只在启动时读取一次）
 
 > 坐标系用 **GCJ-02**（腾讯、高德都是）。百度地图拾取器给的是 BD-09，差几百米，需先转换。
 
