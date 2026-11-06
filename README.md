@@ -1,7 +1,13 @@
 # 微助教自动签到（PC / 微信内置浏览器）
 
+<p align="center">
+  <img src="docs/img/logo.png" width="96" alt="wxsign logo">
+</p>
+
 本项目在 Windows 平台实现微助教课堂签到的自动化：自动获取凭证、轮询签到任务并提交结果。  
 全过程无需人工点击、屏幕截图或鼠标模拟；凭证失效时自动重新获取并继续运行。
+
+**by Hikari** · [github.com/qyr0721/weizhujiao-autosign-pc-hook](https://github.com/qyr0721/weizhujiao-autosign-pc-hook)
 
 ---
 
@@ -63,7 +69,7 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
     → 跳转授权页 → 点「确认授权」→ 进入签到页（此时微信已持有可复用的会话）
 
 日常使用
-  双击 wxsign-portable.exe（打开图形界面，点「启动签到」）/ start.bat（终端模式）
+  双击 wxsign-portable.exe（美化终端面板，按 T 打开内置教程）/ start.bat（源码方式）
     │
     ├─ 偏移自检        当前 WMPF 版本的配置缺失/指纹不符 → 自动探测并写回
     ├─ 代理守护        确保 WMPFDebugger 运行并监听 9421 / 62000，已运行则复用
@@ -170,14 +176,14 @@ wxsign-portable.exe --no-setup
 
 ### 启动签到程序
 
-**便携版**：双击 `wxsign-portable.exe`，程序会自动打开浏览器显示**图形界面**（本机 `127.0.0.1`，不上传任何数据），全程点按钮即可：
+**便携版**：双击 `wxsign-portable.exe`，弹出美化后的终端面板，程序自动开始值守：
 
-- **▶ 启动签到 / ⏹ 停止**：启动或停止值守
-- **📖 使用教程**：内置完整图文教程（离线可用）
-- **🔄 重新自检 / ⏻ 退出程序**：环境检查与退出
-- 中部为**状态卡**（微信版本、自检、凭证、通道、签到状态）与**实时日志**
+- 标题框下是**环境行**（微信 / WMPF 版本、自检状态，绿点=正常）
+- `▌` 开头的**动作行**实时显示当前在做什么（注入 hook / 等待小程序 / 取号 / 监视中）
+- **签到行**显示最近一次签到结果（✓ 成功 / ✕ 失败）
+- 面板底部：**按 T 打开内置完整图文教程**（离线），`Ctrl+C` 退出
 
-界面就绪后按教程打开小程序建立通道，之后老师一发起签到，约 5 秒内自动提交。
+面板就绪后按教程打开小程序建立通道，之后老师一发起签到，约 5 秒内自动提交。
 
 **源码运行**
 
@@ -186,9 +192,9 @@ git clone https://github.com/qyr0721/weizhujiao-autosign-pc-hook.git
 cd weizhujiao-autosign-pc-hook
 pip install websockets
 
-python app.py --check     # 检测代理、通道与当前凭证状态
-python app.py             # 图形界面（自动打开浏览器）
-python run.py             # 终端常驻模式（凭证获取与签到同时进行）
+python wizard.py --check  # 环境自检
+python wizard.py          # 面板式常驻（同 exe）
+python run.py             # 纯日志常驻（无面板）
 ```
 
 
@@ -217,7 +223,7 @@ WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletInde
 且断开后不会自动重连。因此启动顺序如下：
 
 ```
-1. 启动 app.py / run.py / start.bat / wxsign-portable.exe
+1. 启动 wizard.py / run.py / start.bat / wxsign-portable.exe
 2. 让小程序连上调试通道（见下方「打开顺序」）
 ```
 

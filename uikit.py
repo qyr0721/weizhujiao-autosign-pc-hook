@@ -22,8 +22,8 @@ import time
 import unicodedata
 
 APP = "微助教自动签到"
-VER = "v1.7"
-AUTHOR = "qyr0721"
+VER = "v1.8"
+AUTHOR = "Hikari"
 REPO = "github.com/qyr0721/weizhujiao-autosign-pc-hook"
 
 # 只是「内置 a8key 观测钩子 RVA」对应的基准版本，**不是运行门槛**。
@@ -114,6 +114,9 @@ class Term:
     GREEN = "\033[1;32m"
     YELLOW = "\033[33m"
     RED = "\033[31m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    WHITE = "\033[97m"
 
     def __init__(self, plain=False, title=""):
         self.plain = plain or not sys.stdout.isatty() or not enable_ansi(title)
@@ -157,21 +160,30 @@ class Redraw:
         sys.stdout.flush()
 
 
-def title_box(term, lines, inner=58):
-    """闭合标题框。只放中英文数字（宽度确定），所以框恒准。"""
-    bar = term.c("│", term.DIM)
-    out = [term.c("┌" + "─" * inner + "┐", term.DIM)]
+def title_box(term, lines, inner=58, border=None):
+    """圆角标题框。只放中英文数字（宽度确定），所以框恒准。
+
+    border 为框线颜色，缺省用青色，让标题区一眼区别于正文。
+    """
+    bc = border if border is not None else term.CYAN
+    bar = term.c("│", bc)
+    out = [term.c("╭" + "─" * inner + "╮", bc)]
     for text, color in lines:
         body = fit("  " + text, inner)
         if color:
             body = term.c(body, color)
         out.append(bar + body + bar)
-    out.append(term.c("└" + "─" * inner + "┘", term.DIM))
+    out.append(term.c("╰" + "─" * inner + "╯", bc))
     return out
 
 
 def rule(term, inner=58):
-    return term.c("  " + "─" * (inner // 2), term.DIM)
+    """细分隔线：左端一个亮点，比一整条实线更轻。"""
+    return term.c("  ·" + "─" * (inner // 2 - 1), term.DIM)
+
+
+def dot(term, color, char="●"):
+    return term.c(char, color)
 
 
 # ================================================================ 日志文件

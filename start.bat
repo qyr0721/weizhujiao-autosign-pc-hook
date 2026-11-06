@@ -9,7 +9,7 @@ echo.
 echo   starting...
 echo.
 
-"%PY%" run.py %*
+"%PY%" wizard.py %*
 
 echo.
 echo   ------------------------------

@@ -44,11 +44,10 @@ jobs:
         run: python tools/verify_bundle.py dist/wxsign-portable.exe
 
       # Runner 上没有微信，--check 必然返回 1；只要求 exe 能启动、不崩。
-      # 入口已换成 app.py（图形界面），--check 是其自检参数，不打开窗口。
       - name: Smoke test
         continue-on-error: true
         shell: bash
-        run: ./dist/wxsign-portable.exe --check
+        run: ./dist/wxsign-portable.exe --check --plain --no-pause --no-setup --no-auto-offsets
 
       - name: Create release and upload assets
         shell: bash

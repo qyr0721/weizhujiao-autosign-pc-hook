@@ -56,17 +56,23 @@ class Panel:
         self._dyn = {"action": info["action"], "sign": info["sign"] or "—"}
         rows = U.title_box(t, [
             ("%s  %s" % (APP, VER), t.BOLD),
-            ("by %s" % AUTHOR, t.DIM),
+            ("by %s" % AUTHOR, t.MAGENTA),
             (REPO, t.DIM),
         ], INNER)
         rows.append("")
 
-        ver = "  微信 %s   ·   WMPF %s" % (info["wechat"], info["wmpf"])
-        rows.append(t.c(ver, t.YELLOW if not info["wmpf_ok"] else None))
+        wmpf_warn = not info["wmpf_ok"]
+        rows.append("  %s  %s" % (
+            U.dot(t, t.YELLOW if wmpf_warn else t.GREEN),
+            t.c("微信 %s   ·   WMPF %s" % (info["wechat"], info["wmpf"]),
+                t.YELLOW if wmpf_warn else t.WHITE)))
         if info["ok"]:
-            rows.append("  自检  " + t.c("正常", t.GREEN))
+            rows.append("  %s  自检  %s" % (U.dot(t, t.GREEN),
+                                          t.c("正常", t.GREEN)))
         else:
-            rows.append("  自检  " + t.c("异常", t.RED) + "  " + t.c(info["note"], t.DIM))
+            rows.append("  %s  自检  %s  %s" % (U.dot(t, t.RED),
+                                              t.c("异常", t.RED),
+                                              t.c(info["note"], t.DIM)))
         rows.append("")
 
         # 首次使用：微信里还没有可复用的会话，必须先手动授权一次。
@@ -84,7 +90,7 @@ class Panel:
         rows.append(U.rule(t, INNER))
         rows.append("")
 
-        rows.append(t.c("  │ ", t.DIM) + t.c(info["action"], t.CYAN))
+        rows.append(t.c("  ▌", t.CYAN) + t.c(info["action"], t.BOLD))
         rows.append("")
         for hint in info["hint"]:
             rows.append(t.c("    " + hint, t.DIM))
@@ -92,13 +98,16 @@ class Panel:
         rows.append(U.rule(t, INNER))
 
         sign, kind = info["sign"], info["sign_kind"]
-        color = {"ok": t.GREEN, "dup": t.DIM, "fail": t.RED}.get(kind)
-        rows.append("  " + t.c("签到", t.DIM) + "  " + t.c(sign or "—", color))
+        color = {"ok": t.GREEN, "dup": t.DIM, "fail": t.RED}.get(kind, t.DIM)
+        mark = {"ok": "✓", "dup": "·", "fail": "✕"}.get(kind, "·")
+        rows.append("  " + t.c("签到", t.DIM) + "  "
+                    + U.dot(t, color, mark) + " " + t.c(sign or "—", color))
         rows.append(U.rule(t, INNER))
         rows.append("")
 
         rows.append("  " + t.c("日志", t.DIM) + "  " + t.c(info["logfile"], t.DIM))
-        rows.append(t.c("  Ctrl+C 退出，不影响正在运行的小程序", t.DIM))
+        rows.append(t.c("  按 T 打开使用教程   ·   Ctrl+C 退出，不影响正在运行的小程序",
+                        t.DIM))
         return rows
 
     def render(self, info):
@@ -118,6 +127,50 @@ class Panel:
         if out:
             print("\n".join(out))
             sys.stdout.flush()
+
+
+# ================================================================ 教程热键
+def tutorial_path():
+    """TUTORIAL.md 的位置：打包资源优先，其次程序目录/仓库根。"""
+    cands = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        cands.append(os.path.join(meipass, "TUTORIAL.md"))
+    cands.append(os.path.join(HERE, "TUTORIAL.md"))
+    for p in cands:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def open_tutorial(term):
+    """用系统默认程序打开内置教程（Typora / 浏览器 / VS Code 都行）。"""
+    path = tutorial_path()
+    if not path:
+        print(term.c("  未找到 TUTORIAL.md", term.RED))
+        return
+    try:
+        os.startfile(path)  # noqa: S606
+        print(term.c("  已打开使用教程（%s）" % path, term.GREEN))
+    except Exception as exc:  # noqa: BLE001
+        print(term.c("  打开教程失败：%s；文件在 %s" % (exc, path), term.YELLOW))
+
+
+def _hotkey_loop(term):
+    """后台轮询按键：T 打开教程。仅 Windows 控制台（msvcrt）。"""
+    try:
+        import msvcrt
+    except ImportError:
+        return
+    while True:
+        try:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ("t", "T"):
+                    open_tutorial(term)
+        except Exception:  # noqa: BLE001
+            return
+        time.sleep(0.2)
 
 
 # ================================================================ 环境自检
@@ -522,6 +575,11 @@ def main():
     term = U.Term(plain=args.plain, title="%s %s" % (APP, VER))
     log = U.FileLog(U.log_dir(HERE))
     panel = Panel(term)
+
+    # 后台热键：T 打开内置教程（仅交互式控制台；--check 短命进程不必开）
+    if not args.check and not term.plain:
+        threading.Thread(target=_hotkey_loop, args=(term,),
+                         daemon=True, name="hotkey").start()
 
     info, fixes, wmpf_dir, node = preflight()
     # 没有号 = 这台机器还没完成过那次手动授权。取号本身依赖微信客户端里

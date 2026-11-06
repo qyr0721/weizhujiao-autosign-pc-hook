@@ -179,7 +179,7 @@ def main():
     widths = {U.dwidth(r) for r in box}
     ok(len(widths) == 1, "标题框所有行同宽（%s）" % widths, str(sorted(widths)))
     ok(widths == {(W.INNER + 2)}, "宽度等于 TOTAL=%d" % (W.INNER + 2), str(widths))
-    ok(box[0].startswith("┌") and box[-1].startswith("└"), "标题框上下边框正确")
+    ok(box[0].startswith("╭") and box[-1].startswith("╰"), "标题框上下边框正确（圆角）")
     ok(all(r.startswith("│") and r.endswith("│") for r in box[1:4]), "标题框左右边框闭合")
 
     long_info = base_info(action="正在取号…" + "很长" * 60,

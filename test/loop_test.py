@@ -324,6 +324,22 @@ def test_panel_mapping():
     ok(st.channel, "正常值守同时把通道标为已连接", str(st.channel))
 
 
+def test_nap():
+    """run._nap：可中断等待（曾属 gui_test，Web 移除后归入主循环测试）。"""
+    import threading
+    print("\n=== 可中断等待 ===")
+    stop = threading.Event()
+    t0 = time.time()
+    got = asyncio.run(runmod._nap(0.12, stop.is_set))
+    ok(got is True and time.time() - t0 < 1.0, "未请求停止时正常等待结束")
+
+    stop.set()
+    t1 = time.time()
+    got2 = asyncio.run(runmod._nap(10, stop.is_set))
+    ok(got2 is False and time.time() - t1 < 1.0,
+       "停止信号能立刻打断长等待", "耗时 %.2fs" % (time.time() - t1))
+
+
 def main():
     print("=== loop 时序 ===")
     test_no_idle_wait_after_new_oid()
@@ -332,6 +348,7 @@ def main():
     test_pick_tab_rejects_internal_pages()
     test_reject_preexisting_oid()
     test_panel_mapping()
+    test_nap()
     print("\n  %d 通过，%d 失败" % (PASS, FAIL))
     if os.path.exists(OUT):
         os.remove(OUT)
