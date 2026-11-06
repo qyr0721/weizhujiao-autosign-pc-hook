@@ -64,8 +64,6 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 ## 工作流程
 
 ```
-
-日常使用
   双击 wxsign-portable.exe / start.bat（源码方式）
     │
     ├─ 偏移自检        当前 WMPF 版本的配置缺失/指纹不符 → 自动探测并写回
