@@ -13,7 +13,7 @@
 
 ## 教程
 
-### 我用deepseek生成了一个超级详细，3岁小孩也能懂的教程：[TUTORIAL.md](TUTORIAL.md)
+### 我用deepseek生成了一个超级详细，3岁小孩也能懂的教程：[使用教程](https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/)
 
 ---
 
