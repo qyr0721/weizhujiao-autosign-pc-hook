@@ -64,12 +64,9 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 ## 工作流程
 
 ```
-首次使用（仅一次）
-  在微信「微助教服务号」中右键点击签到通知 → 菜单点「签到(C)」
-    → 跳转授权页 → 点「确认授权」→ 进入签到页（此时微信已持有可复用的会话）
 
 日常使用
-  双击 wxsign-portable.exe（美化终端面板，按 T 打开在线教程）/ start.bat（源码方式）
+  双击 wxsign-portable.exe / start.bat（源码方式）
     │
     ├─ 偏移自检        当前 WMPF 版本的配置缺失/指纹不符 → 自动探测并写回
     ├─ 代理守护        确保 WMPFDebugger 运行并监听 9421 / 62000，已运行则复用
@@ -91,7 +88,6 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 | --- | --- |
 | 内置基准（仅用于展示/自检） | 微信 PC **4.1.15.56** / WMPF **25799** |
 | 实际支持 | 由 WMPFDebugger `--auto-detect` 探测当前 `flue.dll` 的 RVA，按版本写回 |
-| 安装包（想对齐基准时才用） | [`WeChatWin_4.1.15.exe`](https://github.com/qyr0721/weizhujiao-autosign-pc-hook/releases/latest)，sha256 `4422bad98617dd095005c7879b2190f188ffa9ad6abf79e075358cf981a3d9e4` |
 
 自动适配流程（`offsets.py`）：
 
