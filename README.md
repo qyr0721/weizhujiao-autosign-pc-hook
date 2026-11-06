@@ -210,12 +210,7 @@ python run.py             # 纯日志常驻（无面板）
 ### 调试通道说明
 
 WMPF 调试通道仅在**小程序启动瞬间**建立（hook 位于 `AppletIndexContainer::OnLoadStart`），  
-且断开后不会自动重连。因此启动顺序如下：
-
-```
-1. 启动 wizard.py / run.py / start.bat / wxsign-portable.exe
-2. 让小程序连上调试通道（见下方「打开顺序」）
-```
+且断开后不会自动重连。
 
 ---
 
