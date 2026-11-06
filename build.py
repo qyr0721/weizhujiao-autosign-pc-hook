@@ -4,16 +4,20 @@
 build.py — 构建 wxsign 发布产物
 
 用法
-  python build.py portable       # dist/wxsign-portable.exe  单文件，首次运行联网部署
-  python build.py integrated     # dist/wxsign-integrated.zip 解压即用，完全离线
+  python build.py portable       # dist/wxsign-portable.exe  单文件图形界面（默认入口）
+  python build.py integrated     # dist/wxsign-integrated.zip（本地自行构建，不发布）
   python build.py all            # 两个都做
+
+入口为 app.py（本地 Web 图形界面，--windowed，不弹控制台）；
+TUTORIAL.md 与 docs/img 通过 --add-data 打进包，界面里点「使用教程」即可离线查看。
+源码运行 `python wizard.py` 仍可回到原来的终端面板。
 
 集成版复用本机已部署的组件，可用参数指定（不指定时自动探测）：
   --node-dir   完整 Node 便携目录（含 node.exe / npm.cmd / node_modules）
   --wmpf-dir   WMPFDebugger 目录（需已 npm install，含 tsx 与 frida）
 
 产物只写入 dist/ 与 build/，两者都已在 .gitignore 中。
-入口固定为 wizard.py；签到/取号/偏移模块由 PyInstaller 的静态分析自动收进 PYZ，
+签到/取号/偏移模块由 PyInstaller 的静态分析自动收进 PYZ，
 websockets 有动态导入，用 --collect-submodules 显式收全。
 """
 import argparse
@@ -30,13 +34,17 @@ BUILD = os.path.join(HERE, "build")
 
 PYI_BASE = [
     sys.executable, "-m", "PyInstaller",
-    "--noconfirm", "--clean", "--console",
+    "--noconfirm", "--clean", "--windowed",
     "--distpath", DIST, "--workpath", BUILD,
     "--log-level", "WARN",
     "--collect-submodules", "websockets",
     "--exclude-module", "tkinter",
     "--exclude-module", "pytest",
     "--exclude-module", "PyInstaller",
+    # 界面里点「使用教程」要能离线打开，所以把教程与配图一起打进包
+    "--add-data", os.path.join(HERE, "TUTORIAL.md") + os.pathsep + ".",
+    "--add-data", (os.path.join(HERE, "docs", "img") + os.pathsep
+                   + os.path.join("docs", "img")),
 ]
 
 # 集成版不需要把这些塞进 zip（体积 / 缓存 / 日志 / 上游仓库元数据）
@@ -50,8 +58,8 @@ def log(msg):
     print("[%s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
 
-def pyi(extra):
-    cmd = PYI_BASE + extra + [os.path.join(HERE, "wizard.py")]
+def pyi(extra, entry="app.py"):
+    cmd = PYI_BASE + extra + [os.path.join(HERE, entry)]
     log("PyInstaller: %s" % " ".join(cmd[3:]))
     return subprocess.run(cmd, cwd=HERE).returncode
 

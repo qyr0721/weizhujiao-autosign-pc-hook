@@ -81,6 +81,22 @@ def has_sign_tab(targets):
                and t.get("type") in ("page", "webview") for t in targets)
 
 
+async def _nap(seconds, stop_check=None):
+    """可中断的等待：GUI 的「停止」按钮需要在 0.5 秒内被响应。
+
+    返回 False 表示收到停止请求；原来直接 asyncio.sleep(poll) 会让
+    点击停止后最多还要等一整个轮询周期。
+    """
+    end = time.time() + max(0.0, seconds)
+    while True:
+        if stop_check is not None and stop_check():
+            return False
+        left = end - time.time()
+        if left <= 0:
+            return True
+        await asyncio.sleep(min(0.5, left))
+
+
 async def _startup_offsets(args, log, sup):
     """启动阶段自愈：微信更新换了 WMPF 版本，先探测再拉代理。
 
@@ -142,7 +158,8 @@ async def _recover_offsets_runtime(args, log, sup, st):
             % (why, int(OFFSET_RETRY_COOLDOWN)))
 
 
-async def run(args, log, force_check=None):
+async def run(args, log, force_check=None, stop_check=None):
+    """主循环。stop_check 由 GUI 注入，返回 True 时干净退出（不关闭调试代理）。"""
     sup = ck.ProxySupervisor(args.wmpf_dir, args.node)
 
     # 只有正式入口（本文件的 main / wizard）显式开启；测试或直接构造
@@ -177,6 +194,9 @@ async def run(args, log, force_check=None):
 
     while True:
         ticks += 1
+        if stop_check is not None and stop_check():
+            log("已停止。调试代理仍在运行，小程序不受影响。")
+            return 0
 
         # 偏移失效自愈：代理输出里的明确错误会落一个 stale 标记，
         # 这里每 3 轮查一次（只是几次 stat，很便宜），带冷却避免反复探测。
@@ -214,7 +234,9 @@ async def run(args, log, force_check=None):
             log("代理没在监听（%s），尝试拉起..." % why)
             if not port_open_or_spawn(sup, log):
                 log("代理起不来，30s 后重试")
-                await asyncio.sleep(30)
+                if not await _nap(30, stop_check):
+                    log("已停止。调试代理仍在运行。")
+                    return 0
             # 拉起成功就立刻重探。30s 是「起不来」时的退避，不是成功后的固定间隔；
             # 写在分支外面会让每次冷启动都白等 30s（实测到「等待小程序连接」要 37s）。
             continue
@@ -235,7 +257,9 @@ async def run(args, log, force_check=None):
                 return 2
             # 通道不通时轮询要勤快：10s 间隔会让「小程序连上」到「面板切换」
             # 白等最多一个周期（实测 8s）。断连期间用短间隔，连上后回到 poll。
-            await asyncio.sleep(min(args.poll, 2.0))
+            if not await _nap(min(args.poll, 2.0), stop_check):
+                log("已停止。调试代理仍在运行。")
+                return 0
             continue
 
         # 通道可用
@@ -251,7 +275,9 @@ async def run(args, log, force_check=None):
                 log("正常值守：号 %s… 状态=%s，通道 %d 个 target" % (cur[:8], st, len(targets)))
             if args.once:
                 return 0
-            await asyncio.sleep(args.poll)
+            if not await _nap(args.poll, stop_check):
+                log("已停止。调试代理仍在运行。")
+                return 0
             continue
 
         # 需要（重新）取号
@@ -261,7 +287,9 @@ async def run(args, log, force_check=None):
             log("  冷却 %ds，稍候再试" % left)
             if args.once:
                 return 4
-            await asyncio.sleep(min(left, args.poll))
+            if not await _nap(min(left, args.poll), stop_check):
+                log("已停止。调试代理仍在运行。")
+                return 0
             continue
 
         last_try = time.time()
@@ -295,7 +323,9 @@ async def run(args, log, force_check=None):
         # 下一圈 openid 有效，会直接打出「正常值守」，面板随即进入「监视中」。
         if oid:
             continue
-        await asyncio.sleep(args.poll)
+        if not await _nap(args.poll, stop_check):
+            log("已停止。调试代理仍在运行。")
+            return 0
 
 
 def start_signer(args, log):

@@ -13,6 +13,7 @@ run_all.py — 一次性跑完所有可离线执行的测试
   5. installer 环境部署：zip slip 防护 / 解码 / 失败识别             [纯 python]
   6. loop      主循环时序：换号后不空等 / oid_state 不阻塞事件循环    [纯 python]
   7. offsets   偏移版本自适应：版本/指纹变化、自动探测、失效兜底      [纯 python]
+  8. gui       图形界面教程渲染 / 两种配图写法 / 可中断等待          [纯 python]
 
 不包含需要真实微信通道的部分（那需要一台装着微信的机器）。
 缺少可选依赖（tsx / mux_test.ts）的套会标成 SKIP，不算失败。
@@ -72,6 +73,7 @@ def main():
     results.append(("installer", run("installer_test", [sys.executable, "test/installer_test.py"], ROOT)))
     results.append(("loop", run("loop_test", [sys.executable, "test/loop_test.py"], ROOT)))
     results.append(("offsets", run("offsets_test", [sys.executable, "test/offsets_test.py"], ROOT)))
+    results.append(("gui", run("gui_test", [sys.executable, "test/gui_test.py"], ROOT)))
 
     print("\n================ 汇总 ================")
     bad, passed, skipped = 0, 0, 0
