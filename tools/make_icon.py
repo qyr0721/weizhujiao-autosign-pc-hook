@@ -77,7 +77,14 @@ def make_base():
 
 
 def bmp_entry(im, size):
-    """未压缩 BMP 条目：BITMAPINFOHEADER + BGRA（自底向上）+ AND 掩码。"""
+    """未压缩 BMP 条目：BITMAPINFOHEADER + BGRA（自底向上）+ AND 掩码。
+
+    BITMAPINFOHEADER 字段顺序：
+      biSize, biWidth, biHeight(含 AND 掩码，故为 2 倍), biPlanes, biBitCount,
+      biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter,
+      biClrUsed, biClrImportant
+    注意 biSizeImage 只算 XOR 像素数据，不含 AND 掩码。
+    """
     frame = im.resize((size, size), Image.LANCZOS).convert("RGBA")
     raw = frame.tobytes()
     stride = size * 4
@@ -89,8 +96,15 @@ def bmp_entry(im, size):
             xor += bytes((b, g, r, a))         # BGRA
     mask_stride = ((size + 31) // 32) * 4
     and_mask = bytes(mask_stride * size)       # 全 0：透明度交给 alpha
-    bih = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0,
-                      len(xor) + len(and_mask), 0, 0, 0, 0)
+    bih = struct.pack("<IiiHHIIiiII",
+                      40,               # biSize
+                      size,             # biWidth
+                      size * 2,         # biHeight（XOR + AND）
+                      1,                # biPlanes
+                      32,               # biBitCount
+                      0,                # biCompression = BI_RGB
+                      len(xor),         # biSizeImage（仅 XOR）
+                      0, 0, 0, 0)
     return bih + bytes(xor) + and_mask
 
 
