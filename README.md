@@ -69,7 +69,7 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
     → 跳转授权页 → 点「确认授权」→ 进入签到页（此时微信已持有可复用的会话）
 
 日常使用
-  双击 wxsign-portable.exe（美化终端面板，按 T 打开内置教程）/ start.bat（源码方式）
+  双击 wxsign-portable.exe（美化终端面板，按 T 打开在线教程）/ start.bat（源码方式）
     │
     ├─ 偏移自检        当前 WMPF 版本的配置缺失/指纹不符 → 自动探测并写回
     ├─ 代理守护        确保 WMPFDebugger 运行并监听 9421 / 62000，已运行则复用
@@ -181,7 +181,7 @@ wxsign-portable.exe --no-setup
 - 标题框下是**环境行**（微信 / WMPF 版本、自检状态，绿点=正常）
 - `▌` 开头的**动作行**实时显示当前在做什么（注入 hook / 等待小程序 / 取号 / 监视中）
 - **签到行**显示最近一次签到结果（✓ 成功 / ✕ 失败）
-- 面板底部：**按 T 打开内置完整图文教程**（离线），`Ctrl+C` 退出
+- 面板底部：**按 T 打开在线教程**（[网页版教程](https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/)），`Ctrl+C` 退出
 
 面板就绪后按教程打开小程序建立通道，之后老师一发起签到，约 5 秒内自动提交。
 

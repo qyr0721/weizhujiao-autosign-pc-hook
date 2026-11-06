@@ -8,8 +8,9 @@ build.py — 构建 wxsign 发布产物
   python build.py integrated     # dist/wxsign-integrated.zip 解压即用，完全离线
   python build.py all            # 两个都做
 
-入口固定为 wizard.py（美化后的终端面板）；icon.ico 为程序图标，
-TUTORIAL.md 与 docs/img 通过 --add-data 打进包，面板上按 T 即可离线打开教程。
+入口固定为 wizard.py（美化后的终端面板）；icon.ico 为程序图标（BMP 条目 + 256px PNG，
+兼容 Windows 图标提取）。面板上按 T 打开在线教程网页（https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/），
+程序内不再内置 md。
 
 集成版复用本机已部署的组件，可用参数指定（不指定时自动探测）：
   --node-dir   完整 Node 便携目录（含 node.exe / npm.cmd / node_modules）
@@ -41,10 +42,6 @@ PYI_BASE = [
     "--exclude-module", "pytest",
     "--exclude-module", "PyInstaller",
     "--icon", os.path.join(HERE, "icon.ico"),
-    # 按 T 打开教程要能离线查看，所以把教程与配图一起打进包
-    "--add-data", os.path.join(HERE, "TUTORIAL.md") + os.pathsep + ".",
-    "--add-data", (os.path.join(HERE, "docs", "img") + os.pathsep
-                   + os.path.join("docs", "img")),
 ]
 
 # 集成版不需要把这些塞进 zip（体积 / 缓存 / 日志 / 上游仓库元数据）

@@ -50,6 +50,10 @@ class Panel:
     def __init__(self, term):
         self.t = term
         self.view = U.Redraw(term)
+        self._info = None
+
+    def snapshot(self):
+        return self._info
 
     def compose(self, info):
         t = self.t
@@ -106,14 +110,15 @@ class Panel:
         rows.append("")
 
         rows.append("  " + t.c("日志", t.DIM) + "  " + t.c(info["logfile"], t.DIM))
-        rows.append(t.c("  按 T 打开使用教程   ·   Ctrl+C 退出，不影响正在运行的小程序",
+        rows.append(t.c("  按 T 打开在线教程   ·   Ctrl+C 退出，不影响正在运行的小程序",
                         t.DIM))
         return rows
 
-    def render(self, info):
+    def render(self, info, force=False):
+        self._info = info
         rows = self.compose(info)
         if not self.t.plain:
-            self.view.draw(rows)
+            self.view.draw(rows, force=force)
             return
         # 无 ANSI：只输出变化的那一行
         dyn = getattr(self, "_dyn", {"action": "", "sign": ""})
@@ -130,44 +135,41 @@ class Panel:
 
 
 # ================================================================ 教程热键
-def tutorial_path():
-    """TUTORIAL.md 的位置：打包资源优先，其次程序目录/仓库根。"""
-    cands = []
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        cands.append(os.path.join(meipass, "TUTORIAL.md"))
-    cands.append(os.path.join(HERE, "TUTORIAL.md"))
-    for p in cands:
-        if os.path.isfile(p):
-            return p
-    return None
+TUTORIAL_URL = "https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/"
 
 
-def open_tutorial(term):
-    """用系统默认程序打开内置教程（Typora / 浏览器 / VS Code 都行）。"""
-    path = tutorial_path()
-    if not path:
-        print(term.c("  未找到 TUTORIAL.md", term.RED))
-        return
+def open_tutorial():
+    """用系统默认浏览器打开在线教程（网页版，程序内不再内置 md）。"""
     try:
-        os.startfile(path)  # noqa: S606
-        print(term.c("  已打开使用教程（%s）" % path, term.GREEN))
-    except Exception as exc:  # noqa: BLE001
-        print(term.c("  打开教程失败：%s；文件在 %s" % (exc, path), term.YELLOW))
+        os.startfile(TUTORIAL_URL)  # noqa: S606
+    except Exception:  # noqa: BLE001
+        try:
+            import webbrowser
+            webbrowser.open(TUTORIAL_URL)
+        except Exception:  # noqa: BLE001
+            pass
 
 
-def _hotkey_loop(term):
-    """后台轮询按键：T 打开教程。仅 Windows 控制台（msvcrt）。"""
+def _hotkey_loop(term, panel):
+    """后台轮询按键：T 打开在线教程。仅 Windows 控制台（msvcrt）。
+
+    另一个职责：控制台被外部程序（启动浏览器/编辑器时的 stdout 噪音）
+    刷屏后，面板会被顶掉——这里定期强制重绘一次把面板抢回来。
+    """
     try:
         import msvcrt
     except ImportError:
-        return
+        msvcrt = None
+    ticks = 0
     while True:
         try:
-            if msvcrt.kbhit():
+            if msvcrt is not None and msvcrt.kbhit():
                 ch = msvcrt.getwch()
                 if ch in ("t", "T"):
-                    open_tutorial(term)
+                    open_tutorial()
+            ticks += 1
+            if ticks % 25 == 0:          # 约每 5 秒自愈重绘一次
+                panel.render(panel.snapshot(), force=True)
         except Exception:  # noqa: BLE001
             return
         time.sleep(0.2)
@@ -576,9 +578,9 @@ def main():
     log = U.FileLog(U.log_dir(HERE))
     panel = Panel(term)
 
-    # 后台热键：T 打开内置教程（仅交互式控制台；--check 短命进程不必开）
+    # 后台热键：T 打开在线教程 + 面板自愈重绘（仅交互式控制台；--check 短命进程不必开）
     if not args.check and not term.plain:
-        threading.Thread(target=_hotkey_loop, args=(term,),
+        threading.Thread(target=_hotkey_loop, args=(term, panel),
                          daemon=True, name="hotkey").start()
 
     info, fixes, wmpf_dir, node = preflight()
