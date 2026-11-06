@@ -17,6 +17,7 @@ uikit.py — 终端显示与 Windows 探测的公共件（wizard.py / setup.py �
 import ctypes
 import ctypes.wintypes as wintypes
 import os
+import re
 import sys
 import time
 import unicodedata
@@ -74,10 +75,24 @@ def enable_ansi(title=""):
         return False
 
 
+# OSC 8 超链接：ESC ] 8 ; ; URI ESC \
+_LINK_RE = re.compile(r"\033\]8;;[^\033]*\033\\")
+# SGR 颜色转义：ESC [ ... m
+_SGR_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def strip_esc(text):
+    """剥掉超链接与颜色转义，只留可见文本（用于算显示宽度）。
+
+    这两类序列在终端里都不占列，算宽度时必须排除，否则框线会歪。
+    """
+    return _SGR_RE.sub("", _LINK_RE.sub("", text))
+
+
 def dwidth(text):
-    """终端显示宽度（中文/全角算 2 列）。"""
+    """终端显示宽度（中文/全角算 2 列；忽略超链接转义）。"""
     w = 0
-    for ch in text:
+    for ch in strip_esc(text):
         w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
     return w
 
@@ -104,6 +119,24 @@ def fit(text, width):
     return "".join(out) + " " * max(0, width - used)
 
 
+def links_supported():
+    """当前终端是否支持 OSC 8 超链接（Windows Terminal / VS Code / xterm 系）。
+
+    不支持的终端会吞掉未知 OSC 序列，但为了稳妥（老 conhost 可能吐乱码），
+    识别不出来时就不发超链接，只留纯文本。
+    """
+    if os.environ.get("WT_SESSION"):
+        return True
+    if os.environ.get("TERM_PROGRAM") in ("vscode", "WezTerm", "Tabby"):
+        return True
+    term = (os.environ.get("TERM") or "").lower()
+    if term.startswith("xterm") or "alacritty" in term or "wezterm" in term:
+        return True
+    if os.environ.get("ConEmuANSI") == "ON":
+        return True
+    return False
+
+
 class Term:
     """颜色与光标。plain=True 时不输出任何转义。"""
 
@@ -120,6 +153,7 @@ class Term:
 
     def __init__(self, plain=False, title=""):
         self.plain = plain or not sys.stdout.isatty() or not enable_ansi(title)
+        self.can_link = (not self.plain) and links_supported()
 
     def c(self, text, color=None):
         if self.plain or not color:
@@ -134,6 +168,24 @@ class Term:
 
     def clear_screen(self):
         return "" if self.plain else "\033[2J\033[H"
+
+    def link(self, text, url):
+        """OSC 8 超链接：终端里这段文字可直接点击。
+
+        返回的字符串含转义序列，显示宽度为 0，所以 dwidth/fit 必须
+        先剥掉这些序列再算宽度（见 strip_esc）。
+        """
+        if self.plain or not url or not self.can_link:
+            return text
+        return "\033]8;;%s\033\\%s\033]8;;\033\\" % (url, text)
+
+
+def dwidth(text):
+    """终端显示宽度（中文/全角算 2 列；忽略超链接转义）。"""
+    w = 0
+    for ch in strip_esc(text):
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return w
 
 
 class Redraw:

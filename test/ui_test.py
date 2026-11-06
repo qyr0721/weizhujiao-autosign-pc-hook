@@ -247,6 +247,33 @@ def main():
         p2.render(base_info(action="监视中"))       # 内容未变
     ok(buf2.getvalue() == "", "内容未变时不重复输出", repr(buf2.getvalue()))
 
+    print("\n=== 可点击链接 ===")
+    term = U.Term(plain=False)
+    term.plain = False          # 非 tty 环境下会自动降级，这里强制走 ANSI 分支
+    term.can_link = True
+    p4 = W.Panel(term)
+    rows = p4.compose(base_info(action="监视中"))
+    joined = "\n".join(rows)
+
+    ok("\x1b]8;;" in joined, "ANSI 模式发出 OSC 8 超链接")
+    ok("https://github.com/qyr0721" in joined, "作者 handle 指向 GitHub 主页")
+    ok("https://github.com/qyr0721/weizhujiao-autosign-pc-hook" in joined,
+       "仓库地址指向仓库")
+    ok("https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/" in joined,
+       "在线教程指向教程页")
+    ok("@qyr0721" in U.strip_esc(joined), "可见文本含可点击的 handle")
+
+    # 链接转义不占显示宽度，插入后框线必须仍是 INNER+2
+    box4 = rows[0:5]
+    ok({U.dwidth(r) for r in box4} == {(W.INNER + 2)},
+       "插入超链接后框线宽度不变", str({U.dwidth(r) for r in box4}))
+    ok(U.dwidth("\x1b]8;;https://x\x1b\\abc\x1b]8;;\x1b\\") == 3,
+       "dwidth 忽略 OSC 8 转义")
+
+    # plain 模式不得发超链接（重定向到文件时是乱码）
+    plain_rows = W.Panel(U.Term(plain=True)).compose(base_info(action="监视中"))
+    ok(all("\x1b]8;;" not in r for r in plain_rows), "plain 模式不发超链接")
+
     print("\n=== ANSI 定点重绘 ===")
 
     class FakeTTY:

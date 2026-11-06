@@ -57,7 +57,14 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
           echo "Publishing release for ${TAG}"
-          gh release create "${TAG}" \
-            --title "wxsign ${TAG}" \
-            --generate-notes \
-            dist/wxsign-portable.exe
+          # 该 tag 的 Release 可能已存在（重发同一版本）：这时只覆盖 exe 资产，
+          # 保留原有的标题与说明文字，不重新生成 notes。
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} exists — replacing asset only"
+            gh release upload "${TAG}" dist/wxsign-portable.exe --clobber
+          else
+            gh release create "${TAG}" \
+              --title "wxsign ${TAG}" \
+              --generate-notes \
+              dist/wxsign-portable.exe
+          fi

@@ -37,6 +37,25 @@ import uikit as U                    # noqa: E402
 APP, VER, AUTHOR, REPO = U.APP, U.VER, U.AUTHOR, U.REPO
 INNER = 58
 
+# GitHub 登录名（显示名是 Hikari，但链接与 clone 地址都用登录名）
+HANDLE = "qyr0721"
+PROFILE_URL = "https://github.com/" + HANDLE
+REPO_URL = "https://github.com/%s/weizhujiao-autosign-pc-hook" % HANDLE
+TUTORIAL_URL = "https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/"
+
+
+def _linkify(term, row, target, url):
+    """把行内某段文字做成可点击链接（OSC 8）。
+
+    目标串不在行内、或终端不支持超链接时，原样返回。
+    """
+    if not target or target not in row:
+        return row
+    linked = term.link(target, url)
+    if linked == target:
+        return row
+    return row.replace(target, linked, 1)
+
 
 # ================================================================ 面板
 class Panel:
@@ -60,9 +79,13 @@ class Panel:
         self._dyn = {"action": info["action"], "sign": info["sign"] or "—"}
         rows = U.title_box(t, [
             ("%s  %s" % (APP, VER), t.BOLD),
-            ("by %s" % AUTHOR, t.MAGENTA),
+            ("by %s @%s" % (AUTHOR, HANDLE), t.MAGENTA),
             (REPO, t.DIM),
         ], INNER)
+        # 标题框里挑两段做成可点击：作者 handle → 个人主页、仓库地址 → 仓库。
+        # OSC 8 序列显示宽度为 0，所以插入后框线不会歪。
+        rows[2] = _linkify(t, rows[2], "@" + HANDLE, PROFILE_URL)
+        rows[3] = _linkify(t, rows[3], REPO, REPO_URL)
         rows.append("")
 
         wmpf_warn = not info["wmpf_ok"]
@@ -110,8 +133,9 @@ class Panel:
         rows.append("")
 
         rows.append("  " + t.c("日志", t.DIM) + "  " + t.c(info["logfile"], t.DIM))
-        rows.append(t.c("  按 T 打开在线教程   ·   Ctrl+C 退出，不影响正在运行的小程序",
-                        t.DIM))
+        foot = t.c("  按 T 打开在线教程   ·   Ctrl+C 退出，不影响正在运行的小程序",
+                   t.DIM)
+        rows.append(_linkify(t, foot, "在线教程", TUTORIAL_URL))
         return rows
 
     def render(self, info, force=False):
@@ -135,9 +159,6 @@ class Panel:
 
 
 # ================================================================ 教程热键
-TUTORIAL_URL = "https://home.mowan.qzz.io/posts/weizhujiao-autosign-pc-hook/"
-
-
 def open_tutorial():
     """用系统默认浏览器打开在线教程（网页版，程序内不再内置 md）。"""
     try:
