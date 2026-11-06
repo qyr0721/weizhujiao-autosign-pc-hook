@@ -94,10 +94,11 @@ def test_first_run_auth_hint():
     st.feed("  ✔ 拿到新号（S3-Page.navigate）：60536dd83a0a067b61c3cf1eaa3a7cf9")
     ok(st.info["need_auth"] is False, "拿到新号后提示消失")
 
-    # 5. 未授权时动作行要说清楚（[签到] 前缀走 _feed_sign）
+    # 5. 动作行不重复说授权（授权提示只由 ⚠ 块承担，避免误导已授权的老用户）
     st2 = W.State(base_info(need_auth=True))
     st2.feed("  [签到] 还没有 openid，等续号侧产出")
-    ok("手动授权" in st2.info["action"], "未授权时说「等待手动授权」", st2.info["action"])
+    ok("等待小程序连接" in st2.info["action"] and "手动授权" not in st2.info["action"],
+       "未授权时动作行只报「等待小程序连接」", st2.info["action"])
 
     st3 = W.State(base_info(need_auth=False))
     st3.feed("  [签到] 还没有 openid，等续号侧产出")

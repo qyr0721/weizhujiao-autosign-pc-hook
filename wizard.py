@@ -326,9 +326,10 @@ class State:
         elif "查询失败" in m:
             self.set_action("查询失败，重试中…")
         elif "还没有 openid" in m:
-            # 首次使用且尚未授权时，别只说「等待取号」——用户不知道该干什么
+            # 动作行不再说「等待手动授权」——那会误导老用户（明明授权过还提示授权）。
+            # 首次授权要说清楚的事全部由上方 ⚠ 块承担，这里只报流水线状态。
             if self.info.get("need_auth"):
-                self.set_action("等待手动授权（见上方步骤）")
+                self.set_action("等待小程序连接")
             else:
                 self.set_action("等待取号…")
         else:
@@ -338,10 +339,10 @@ class State:
     def _feed_sign(self, m):
         now = time.strftime("%H:%M:%S")
         # 签到侧的日志都带 [签到] 前缀，所以「还没有 openid」只会走到这里。
-        # 首次使用时要明确告诉用户去手动授权，而不是干等。
+        # 授权提示由上方 ⚠ 块承担，动作行只报状态，避免误导老用户。
         if "还没有 openid" in m:
             if self.info.get("need_auth"):
-                self.set_action("等待手动授权（见上方步骤）")
+                self.set_action("等待小程序连接")
             else:
                 self.set_action("等待取号…")
             return True
@@ -592,7 +593,7 @@ def main():
 
     state = State(info)
     if info["need_auth"] and info["ok"]:
-        state.set_action("首次使用——按上方步骤在微信里授权一次")
+        state.set_action("等待小程序连接")
     else:
         state.set_action("环境自检完成" if info["ok"] else "环境未就绪")
     # 代理输出同时喂给面板：hook 注入有最长约 12 秒的窗口（--auto-detect），
