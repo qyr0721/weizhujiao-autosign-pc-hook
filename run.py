@@ -110,19 +110,28 @@ async def _startup_offsets(args, log, sup):
     if st["state"] == offsets.UNKNOWN:
         log("偏移自检：%s（本次跳过自动探测）" % st["reason"])
         return
-    log("偏移自检：%s —— 开始自动探测（约 10 秒，此期间勿开小程序）" % st["reason"])
+    # 内置库命中时是纯写盘：不用等 10 秒，也不用管小程序开没开
+    if offsets.builtin_offsets(st["version"])[0]:
+        log("偏移自检：%s —— 使用内置偏移库（无需扫描）" % st["reason"])
+    else:
+        log("偏移自检：%s —— 开始自动探测（约 10 秒，此期间勿开小程序）" % st["reason"])
     result, ver, why = await asyncio.to_thread(
         offsets.recover_if_needed, args.wmpf_dir, args.node, log)
     sup.refresh_args()
-    if result == "detected":
-        log("  ✔ WMPF %s 的 hook 偏移已自动更新：%s" % (ver, why))
+    if result in ("seeded", "detected"):
+        if result == "seeded":
+            log("  ✔ WMPF %s 的 hook 偏移已由内置库写入：%s" % (ver, why))
+        else:
+            log("  ✔ WMPF %s 的 hook 偏移已自动更新：%s" % (ver, why))
         if ck.port_open(ck.CDP_PORT):
             log("  注意：已有调试代理在跑（仍是旧偏移），请结束该 node 进程后重启本程序")
     elif result == "failed":
         log("  ✘ 自动探测失败：%s" % why)
         log("    仍会以 --auto-detect 临时模式启动，功能不受影响但每次多等约 10 秒")
+        log("    若手上已有该版本的偏移，可 python offsets.py --import <json> 手动落地")
     else:
         log("  偏移状态：%s / %s" % (result, why))
+
 
 
 async def _recover_offsets_runtime(args, log, sup, st):
@@ -131,7 +140,7 @@ async def _recover_offsets_runtime(args, log, sup, st):
     停代理会断开 9421，微信会关掉以调试态拉起的小程序，所以成功之后
     必须提示用户重新打开一次；外部托管的代理不主动杀，只提示手动重启。
     """
-    log("运行中检测到偏移失效（%s），自动重探" % st["reason"])
+    log("运行中检测到偏移失效（%s），自动修复" % st["reason"])
     owned = sup.proc is not None and sup.proc.poll() is None
     if owned:
         sup.stop()
@@ -143,8 +152,9 @@ async def _recover_offsets_runtime(args, log, sup, st):
     result, ver, why = await asyncio.to_thread(
         offsets.recover_if_needed, args.wmpf_dir, args.node, log)
     sup.refresh_args()
-    if result == "detected":
-        log("  ✔ hook 偏移已更新（WMPF %s）" % ver)
+    if result in ("seeded", "detected"):
+        log("  ✔ hook 偏移已更新（WMPF %s，%s）"
+            % (ver, "内置库" if result == "seeded" else "自动探测"))
         if owned:
             port_open_or_spawn(sup, log)
             log("  调试代理已按新偏移重启；9421 曾断开，请重新打开一次小程序")

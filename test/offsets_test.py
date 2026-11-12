@@ -7,6 +7,7 @@ offsets_test.py — 偏移版本自适应与失效自愈（纯 Python，不需�
 
 测什么
   · 版本变化（配置缺失）/ 指纹变化（同版本 flue.dll 被换）/ 配置损坏都能识别
+  · 内置偏移库：扫描失效时直接落地、不跑 --auto-detect、不写错版本的配置
   · 自动探测结果原子写回，带指纹元数据；成功后不再重复探测
   · 探测失败写 stale 标记并累加次数，达上限退回 --auto-detect 兜底
   · 只认明确的偏移错误，通道抖动不误判（误判会白白重启代理杀掉小程序）
@@ -26,12 +27,14 @@ sys.path.insert(0, ROOT)
 
 import offsets as O          # noqa: E402
 import channel_keeper as ck  # noqa: E402
+import known_offsets as KO   # noqa: E402
 import uikit as U            # noqa: E402
 import wizard as W           # noqa: E402
 
 PASS = 0
 FAIL = 0
 VER = "25799"
+BVER = "26134"      # 内置偏移库里有的版本
 
 
 def ok(cond, name, extra=""):
@@ -44,20 +47,21 @@ def ok(cond, name, extra=""):
         print("  FAIL  %s   %s" % (name, extra))
 
 
-def make_env(tmp, cfg=None):
+def make_env(tmp, cfg=None, version=VER):
     """造一个隔离的 WMPFDebugger + WMPF 运行时目录。"""
     wmpf = os.path.join(tmp, "WMPFDebugger")
     root = os.path.join(tmp, "RadiumWMPF")
-    dll = O.flue_dll_path(VER, root)
+    dll = O.flue_dll_path(version, root)
     os.makedirs(os.path.dirname(dll), exist_ok=True)
     with open(dll, "wb") as f:
         f.write(b"fake flue.dll")
     os.makedirs(O.config_dir(wmpf), exist_ok=True)
-    path = O.config_path(wmpf, VER)
+    path = O.config_path(wmpf, version)
     if cfg is not None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(cfg if isinstance(cfg, str) else json.dumps(cfg))
     return wmpf, root, dll, path
+
 
 
 def st_of(wmpf, root, version=VER):
@@ -192,11 +196,111 @@ def test_recover():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_builtin_library():
+    print("\n=== 内置偏移库（扫描失效时的出路） ===")
+    ok(KO.has(BVER), "内置库覆盖 WMPF %s" % BVER, KO.version_text())
+    data = KO.get(BVER)
+    good, why = KO.validate(data)
+    ok(good, "内置数据通过结构校验", why)
+    ok(data.get("Version") == int(BVER), "Version 与版本号一致", str(data.get("Version")))
+    ok(all(k in data for k in ("LoadStartHookOffset", "CDPFilterHookOffset",
+                               "CastToJsonHookOffset"))
+       and "MiniAppConfigStructOffsets" in data,
+       "字段名与上游 addresses.json 完全一致（不做转换）")
+    ok(KO.get(BVER) is not KO.get(BVER), "get 返回副本，改它不会污染内置表")
+    ok(KO.validate({"Version": 1})[0] is False, "缺字段被拒")
+    ok(KO.validate({"LoadStartHookOffset": 123})[0] is False, "非字符串 RVA 被拒")
+    bad = KO.get(BVER)
+    bad["CDPFilterHookOffset"] = "0xZZZ"
+    ok(KO.validate(bad)[0] is False, "非法十六进制被拒")
+    bad2 = KO.get(BVER)
+    bad2["MiniAppConfigStructOffsets"]["SceneOffset"] = -1
+    ok(KO.validate(bad2)[0] is False, "负的结构体偏移被拒")
+    bad3 = KO.get(BVER)
+    bad3["MiniAppConfigStructOffsets"]["LaunchConfigOffsets"] = [64, 1616]
+    ok(KO.validate(bad3)[0] is False, "指针链长度不对被拒")
+
+    tmp = tempfile.mkdtemp(prefix="wzoffb_")
+    orig_detect = O.detect
+    orig_root = O.wmpf_root
+    try:
+        wmpf, root, dll, cfg = make_env(tmp, version=BVER)
+        # 同 test_observe_and_proxy：把本机 WMPF 根目录指到测试目录，
+        # 否则装了微信的机器上指纹会取到真实 dll
+        O.wmpf_root = lambda: root
+        calls = []
+
+        def must_not_scan(*a, **k):
+            calls.append(1)
+            return None, "不该走到扫描"
+
+        O.detect = must_not_scan
+        r, ver, why = O.recover_if_needed(wmpf, "fake-node", version=BVER, root=root)
+        ok(r == "seeded" and ver == BVER, "配置缺失 → 直接用内置偏移落地", str((r, why)))
+        ok(not calls, "内置命中时完全不跑 --auto-detect（扫描坏了也能用）")
+        st = O.state(wmpf, version=BVER, root=root)
+        ok(st["state"] == O.OK and st["source"] == O.BUILTIN_SOURCE,
+           "落地后立即可用且标记来源 builtin", str(st["source"]))
+        with open(cfg, encoding="utf-8") as f:
+            got = json.load(f)
+        ok(got["LoadStartHookOffset"] == "0x2DEDC70" and got["Version"] == int(BVER),
+           "写盘内容就是内置那份", str(got.get("LoadStartHookOffset")))
+        with open(cfg, encoding="utf-8") as f:
+            text = f.read()
+        ok("[64, 1616, 8]" in text, "数组写在一行，与上游 addresses.json 格式一致",
+           text[:60])
+        ok(not os.path.isfile(cfg + O.STALE_SUFFIX), "落地会清掉 stale 标记")
+        sup = ck.ProxySupervisor(wmpf, "fake-node", version=BVER)
+        ok("--auto-detect" not in sup.extra,
+           "落地后代理不再带 --auto-detect（启动不白等 10 秒）", str(sup.extra))
+
+        # 内置那份跑起来仍被判失效：不能拿同一份反复重写，必须换扫描
+        O.mark_stale(cfg + O.STALE_SUFFIX, "模拟代理报偏移错误")
+        O.detect = lambda *a, **k: (None, "模拟扫描也失败")
+        r2, _, why2 = O.recover_if_needed(wmpf, "fake-node", version=BVER, root=root)
+        ok(r2 == "failed" and not calls, "内置那份失效后不再重复写，转为扫描",
+           str((r2, why2)))
+
+        # 版本不在内置库：宁可失败也不能写错位 RVA
+        wmpf2, root2, dll2, cfg2 = make_env(os.path.join(tmp, "v2"), version="25888")
+        r3, _, why3 = O.recover_if_needed(wmpf2, "fake-node", version="25888",
+                                          root=root2)
+        ok(r3 != "seeded" and not os.path.isfile(cfg2),
+           "版本不在内置库且扫描失败 → 不产生配置", str((r3, why3)))
+
+        # --import：外部 json，版本不符默认拒绝，force 才写
+        src = os.path.join(tmp, "given.json")
+        with open(src, "w", encoding="utf-8") as f:
+            json.dump(KO.get(BVER), f, ensure_ascii=False)
+        imported, why4 = O.import_config(src, wmpf2, version="25888", root=root2)
+        ok(not imported and "--force" in why4, "导入版本不符默认拒绝", why4)
+        imported2, why5 = O.import_config(src, wmpf2, version="25888",
+                                          root=root2, force=True)
+        ok(imported2 and os.path.isfile(cfg2), "确认后可强制导入", why5)
+        ok(O.state(wmpf2, version="25888", root=root2)["source"] == "import",
+           "导入来源被记录，后续自愈不会拿内置值覆盖它")
+
+        # 坏 json 不应写盘
+        broken = os.path.join(tmp, "broken.json")
+        with open(broken, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        ok(O.import_config(broken, wmpf2, version="25888", root=root2)[0] is False,
+           "坏 json 被拒")
+    finally:
+        O.detect = orig_detect
+        O.wmpf_root = orig_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_observe_and_proxy():
     print("\n=== 代理日志观察与启动参数 ===")
     tmp = tempfile.mkdtemp(prefix="wzoff3_")
+    orig_root = O.wmpf_root
     try:
         wmpf, root, dll, cfg = make_env(tmp, cfg={"OnLoadStart": 1})
+        # 把「本机 WMPF 根目录」指向测试目录：装了微信的机器上，默认根目录里
+        # 有同版本的真 flue.dll，指纹会和这里的假 dll 不符，状态会被判成 STALE。
+        O.wmpf_root = lambda: root
         O.write_config(cfg, {"OnLoadStart": 1}, cfg + O.META_SUFFIX,
                        VER, O.fingerprint(VER, root))
         st = st_of(wmpf, root)
@@ -208,12 +312,12 @@ def test_observe_and_proxy():
         ok(st_of(wmpf, root)["state"] == O.STALE, "下一轮状态检查能看到失效")
         O.clear_stale(st["stale"])
 
-        ok(O.needs_runtime_autodetect(wmpf, version=VER) is False,
+        ok(O.needs_runtime_autodetect(wmpf, version=VER, root=root) is False,
            "配置可用时不需要临时 auto-detect")
         sup = ck.ProxySupervisor(wmpf, "fake-node", version=VER)
         ok("--auto-detect" not in sup.extra, "构造时不加 --auto-detect")
         os.remove(cfg)
-        ok(O.needs_runtime_autodetect(wmpf, version=VER) is True,
+        ok(O.needs_runtime_autodetect(wmpf, version=VER, root=root) is True,
            "配置缺失时需要临时 auto-detect")
         sup.refresh_args()
         ok("--auto-detect" in sup.extra, "refresh_args 会补上兜底参数")
@@ -222,7 +326,9 @@ def test_observe_and_proxy():
         sup.refresh_args()
         ok("--auto-detect" not in sup.extra, "写回后会去掉兜底参数，秒注入")
     finally:
+        O.wmpf_root = orig_root
         shutil.rmtree(tmp, ignore_errors=True)
+
 
 
 def test_preflight_no_longer_blocks_new_version():
@@ -247,6 +353,14 @@ def test_preflight_no_longer_blocks_new_version():
            "不再要求用户降级/锁定微信版本", str(fixes))
         ok(not any("WeChatWin" in p for p in fixes),
            "不再提示安装指定版本微信", str(fixes))
+
+        # 版本在「内置偏移库」里：提示应说「直接落地」，不吓唬用户要探测
+        U.find_wmpf_versions = lambda: [int(BVER)]
+        info2, _, _, _ = W.preflight(base=tmp)
+        ok(any("内置偏移" in n for n in info2.get("notes", [])),
+           "内置库有该版本时提示直接落地", str(info2.get("notes")))
+        ok(not any("自动探测" in n for n in info2.get("notes", [])),
+           "内置命中时不再提示要探测", str(info2.get("notes")))
     finally:
         (U.list_processes, U.wechat_version, U.find_wmpf_versions,
          U.resolve_wmpf_dir, U.resolve_node) = saved
@@ -295,6 +409,24 @@ def test_async_hooks():
         asyncio.run(runmod._startup_offsets(args, logs.append, sup))
         ok(len(calls) == 0, "配置可用时启动不再重复探测")
 
+        # 内置偏移库落地这条分支：日志要说清「用的是内置值」，否则用户会以为
+        # 程序偷偷跑了扫描（扫描失效时这条日志是他们判断有没有修好的唯一依据）
+        calls.clear()
+        logs.clear()
+
+        def fake_seed(wmpf_dir, node, log=None, **kw):
+            calls.append((wmpf_dir, node))
+            return "seeded", "26134", "内置库写入"
+
+        O.recover_if_needed = fake_seed
+        O.state = lambda wmpf_dir, **kw: {"state": O.MISSING, "version": "26134",
+                                          "reason": "还没有配置"}
+        asyncio.run(runmod._startup_offsets(args, logs.append, sup))
+        ok(any("内置偏移库" in m for m in logs) and any("内置库写入" in m for m in logs),
+           "内置落地时日志写明确（不冒充扫描结果）", str(logs))
+        O.recover_if_needed = fake_recover
+        calls.clear()
+
         O.state = lambda wmpf_dir, **kw: {
             "state": O.STALE, "version": "25888", "reason": "模拟代理报偏移错误"}
         sup2 = FakeSup()
@@ -310,6 +442,7 @@ def test_async_hooks():
 def main():
     test_state_and_writeback()
     test_parse_and_signals()
+    test_builtin_library()
     test_recover()
     test_observe_and_proxy()
     test_preflight_no_longer_blocks_new_version()

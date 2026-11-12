@@ -27,7 +27,7 @@
 | 多课程    | 依据接口返回内容处理，无需预先配置课程标识                                     |
 | GPS 签到 | `isGPS` 为真时按 `jitter_deg` 对经纬度施加抖动后提交                     |
 | 进程保活   | 签到进程异常退出后由主循环重新获取凭证并拉起                                    |
-| 版本自适应 | 微信更新换了 WMPF 版本后，自动重探 hook 偏移并写回，无需降级或手工重扫          |
+| 版本自适应 | 微信更新换了 WMPF 版本后，自动重探或直接用内置偏移写回，无需降级或手工重扫          |
 
 ---
 
@@ -84,34 +84,55 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 
 | 项目 | 值 |
 | --- | --- |
-| 内置基准（仅用于展示/自检） | 微信 PC **4.1.15.56** / WMPF **25799** |
-| 实际支持 | 由 WMPFDebugger `--auto-detect` 探测当前 `flue.dll` 的 RVA，按版本写回 |
+| 内置偏移库 | WMPF **26134**（可直接落地，无需扫描；见 `known_offsets.py`） |
+| a8key 观测基准 | 微信 PC **4.1.15.56** / WMPF **25799**（仅调试观测用） |
+| 实际支持 | 内置命中 → 直接写配置；未命中 → 由 WMPFDebugger `--auto-detect` 探测当前 `flue.dll` 的 RVA，按版本写回 |
 
 自动适配流程（`offsets.py`）：
 
 1. 读取本机当前 WMPF 版本，计算 `flue.dll` 的轻量指纹（size + mtime，不读 237MB 算 hash）；
 2. 检查 `WMPFDebugger/frida/config/win32/addresses.<版本>.json`：**缺失 / 配置损坏 /
    指纹不符 / 上次留下 `*.stale` 标记** → 判定需要更新；
-3. 跑一次 `node .../tsx src/index.ts --auto-detect`，限时 90 秒，解析输出里的
+3. 先查**内置偏移库**：有该版本就直接写盘（离线、秒级、微信不用开）；
+   没有才跑 `node .../tsx src/index.ts --auto-detect`（限时 90 秒），解析输出里的
    `detected hook offsets: {...}`；
-4. 原子写回配置，并在 sidecar `.meta.json` 里记版本、指纹、来源与时间
-   （不改 WMPFDebugger 自己的配置格式）；
-5. 运行中若代理日志出现明确的偏移错误，主循环下一轮会「停代理 → 重探 → 按新偏移重启」。
+4. 原子写回配置，并在 sidecar `.meta.json` 里记版本、指纹、来源（builtin / auto-detect /
+   import / legacy）与时间（不改 WMPFDebugger 自己的配置格式）；
+5. 运行中若代理日志出现明确的偏移错误，主循环下一轮会「停代理 → 修复 → 按新偏移重启」。
    通道抖动、`no-reply` 之类**不会**被误判，不会为了无关错误把小程序杀掉。
 
 连续失败 2 次后停止反复重探，退回 WMPFDebugger 自带的 `--auto-detect` 临时模式
 （每次启动多等约 10 秒），程序仍可用。运行中重探需要停代理，9421 会短暂断开，
 **完成后请重新打开一次小程序**；启动时重探则完全无感。
 
+### 扫描不出偏移时（内置偏移库）
+
+`--auto-detect` 是静态特征扫描，微信改掉特征后它就再也命中不了——这时**不是没有偏移可用**，
+只是拿不到新的。已知版本的 RVA 可以直接写，项目按版本内置了一批：
+
+```bash
+python offsets.py --check            # 看当前版本 / 指纹 / 配置来源 / 内置库有没有
+python offsets.py --list-builtin     # 内置库覆盖了哪些版本
+python offsets.py --seed             # 用内置值直接写入（不扫描、不需要微信）
+python offsets.py --import f.json    # 导入外部 addresses json（上游 PR / 别人给的）
+```
+
+内置值落盘后来源记为 `builtin`。若这份值之后仍被判定失效，程序**不会**反复重写它，
+而是转去扫描——避免陷入「写同一份 → 报错 → 再写」的死循环。版本不符时默认拒绝写入
+（打错位置的 RVA 会崩进程），确认过才加 `--force`。
+
 手工检查与强制重探：
 
 ```bash
 python offsets.py --check            # 只看当前版本 / 指纹 / 配置状态
-python offsets.py --detect           # 强制重探主偏移（忽略失败次数）
+python offsets.py --detect           # 强制重扫主偏移（跳过内置库、忽略失败次数）
 python offsets.py --rescan-a8key     # 更新调试观测用的 a8key RVA，见「版本适配」
 ```
 
+偏移从哪来、怎么给新版本补一份，见 [docs/OFFSETS.md](docs/OFFSETS.md)。
+
 源码运行与 exe 都可用 `--no-auto-offsets` 关闭自动适配。
+
 
 ---
 
@@ -126,7 +147,7 @@ python offsets.py --rescan-a8key     # 更新调试观测用的 a8key RVA，见�
 | -------------------------- | -------------- | ------- |
 | Node.js 22+                | 首次运行时从网络获取     | **已内置** |
 | WMPFDebugger + tsx + frida | 首次运行时从网络获取     | **已内置** |
-| 偏移配置                       | 按当前 WMPF 版本自动探测生成（版本变化会自动重探） | 内置基准版本配置，其余版本自动探测 |
+| 偏移配置                       | 内置库命中则离线直写，否则按当前版本自动探测生成 | 同左（离线可用，不依赖扫描） |
 
 ### 版本选择
 
@@ -144,7 +165,8 @@ python offsets.py --rescan-a8key     # 更新调试观测用的 a8key RVA，见�
 Node 运行时      下载便携版压缩包并解压至 runtime\node，不写入系统目录
 WMPFDebugger     使用 git clone；未检测到 git 时改用 codeload 压缩包
 依赖 tsx / frida 执行 npm install（frida 预编译绑定约 130 MB）
-偏移配置         按当前 WMPF 版本执行一次 --auto-detect，结果写入 frida\config\win32\addresses.<ver>.json
+偏移配置         先查内置偏移库（有则直接写入，离线秒完成）；没有再跑一次 --auto-detect
+                 结果写入 frida\config\win32\addresses.<ver>.json
 ```
 
 部署产物全部位于程序目录（`runtime\node`、`WMPFDebugger`），不写入注册表、不修改 PATH 环境变量。
@@ -254,11 +276,12 @@ Release 并上传 exe。集成版体积大且依赖本机组件，需本地构�
 
 | 用途 | 落点 | 版本变化后 |
 | --- | --- | --- |
-| 签到主流程（打通调试通道） | `WMPFDebugger/frida/config/win32/addresses.<ver>.json` | **自动**，由 `offsets.py` 调 `--auto-detect` 重探写回 |
+| 签到主流程（打通调试通道） | `WMPFDebugger/frida/config/win32/addresses.<ver>.json` | **自动**：内置库命中直接写，未命中由 `offsets.py` 调 `--auto-detect` 重探写回 |
 | 调试观测（看 a8key 导航拦截） | `a8key_hooks.<ver>.json` | 按需一条命令重扫；不影响签到 |
 
-`OnLoadStart` / `SendToClientFilter` 的偏移由 WMPFDebugger 的 `--auto-detect` 探测，
-程序启动前自动完成，也可 `python offsets.py --detect` 手动触发。
+`OnLoadStart` / `SendToClientFilter` 的偏移在程序启动前自动就绪：先查内置库
+（`known_offsets.py`），没有才走 WMPFDebugger 的 `--auto-detect`。也可以手动
+`python offsets.py --seed`（写内置值）或 `python offsets.py --detect`（强制扫描）。
 
 a8key 观测钩子不参与签到，只供 `tools/probe_a8key.py` 观察 OAuth 被哪一层接管。
 它内置的是 25799 的 RVA；换版本后要生成新表才准。因为要静态分析 237MB 的

@@ -8,7 +8,8 @@ installer.py — 运行环境部署（供 wizard 与主程序内部调用）
   Node 运行时      下载便携版压缩包并解压至 <base>\\runtime\\node，不写入系统目录
   WMPFDebugger     使用 git clone；未检测到 git 时改用 codeload 压缩包
   依赖 tsx / frida 执行 npm install（frida 预编译绑定约 130 MB）
-  偏移配置         执行一次 --auto-detect 并将结果写入 frida\\config\\win32\\
+  偏移配置         先查内置偏移库（离线直写），没有才跑 --auto-detect
+                   结果写入 frida\\config\\win32\\addresses.<ver>.json
 
 本模块不负责界面：进度通过构造时注入的 notify 回调上报，由调用方决定如何显示。
 """
@@ -358,10 +359,11 @@ class Setup:
                             "win32", "addresses.%s.json" % self.wmpf)
 
     def ensure_offsets(self):
-        """按当前 WMPF 版本探测一次并写回（与运行时自愈共用 offsets 模块）。
+        """按当前 WMPF 版本补齐偏移配置（与运行时自愈共用 offsets 模块）。
 
-        探测、限时、解析、原子写回、指纹元数据都在 offsets.py 里，
-        部署流程和运行时恢复用同一套代码，不会出现两份实现漂移。
+        顺序与启动自愈一致：先查内置偏移库（纯写盘，不需要微信运行，也不
+        依赖 --auto-detect 的静态扫描），没有再跑探测。扫描扫不出东西的
+        版本正是内置库存在的意义——部署阶段就把它写掉，用户不必先撞一次墙。
         """
         s = self.by["offsets"]
         cfg = self._offset_path()
@@ -380,13 +382,23 @@ class Setup:
             s.detail = "已存在"
             return True
 
+        s.state = "run"
+        seeded, why_seed = offsets.seed_builtin(
+            offsets.state(self.wmpf_dir, version=self.wmpf), log=self.log.write)
+        if seeded:
+            s.state = "ok"
+            s.detail = "内置偏移 %s" % self.wmpf
+            self.log.write("已写入内置偏移：%s" % why_seed)
+            self.say("偏移已用内置库写入")
+            return True
+        self.log.write("内置偏移不可用：%s，改为探测" % why_seed)
+
         if not U.list_processes({"wechatappex.exe"}):
             s.state = "fail"
             s.detail = "需先启动微信"
-            self.say("微信未运行，无法探测偏移")
+            self.say("微信未运行且无内置偏移，无法生成偏移配置")
             return False
 
-        s.state = "run"
         self.say("探测 hook 偏移（需微信运行，约 10 秒）…")
         data, why = offsets.detect(
             self.node, self.wmpf_dir,
@@ -411,6 +423,7 @@ class Setup:
         s.detail = "已生成 %s" % self.wmpf
         self.log.write("偏移配置已写入：%s" % cfg)
         return True
+
 
     # ---------- 入口 ----------
     def run(self):

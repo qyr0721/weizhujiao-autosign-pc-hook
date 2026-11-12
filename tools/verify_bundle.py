@@ -60,6 +60,9 @@ def main():
         "offsets": "recover_if_needed",
         "channel_keeper": "refresh_args",
         "installer": "write_config",
+        # 内置偏移库是新模块：漏打包时启动会退回纯扫描，症状和「扫描不出」一样，
+        # 光看运行日志分不清，所以必须在产物里验到它。
+        "known_offsets": "validate",
     }
     bad = 0
     for mod, sym in sorted(want.items()):

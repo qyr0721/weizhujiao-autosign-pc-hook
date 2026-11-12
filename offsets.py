@@ -25,6 +25,16 @@ offsets.py — WMPF 偏移配置的版本自适应与失效自愈
   它往 stdout 打一行 `detected hook offsets: {...json...}`，本模块负责
   限时读取、解析、落盘。不需要微信 SDK，不需要 IDA。
 
+  但扫描有失效的时候：微信改了特征，--auto-detect 就再也命中不了。此时
+  「没有偏移」并不等于「拿不到偏移」——偏移只是一组 RVA，已知版本的数值
+  可以直接写。所以在探测之前先查 known_offsets.py 的内置库：
+
+      内置有该版本 -> 直接落盘（离线、秒级、微信不用开）
+      内置没有     -> 跑 --auto-detect（原行为）
+      内置那份用过后仍被判定失效 -> 不再重复写同一份，交给探测
+
+  这一条是「扫描不灵」时的唯一出路，所以顺序是内置优先，而不是探测优先。
+
   注意：a8key 观测钩子（tools/probe_a8key.py 里的 DEFAULT_HOOKS）是另一套
   RVA，只用于调试观测、不参与签到。它的重扫很慢（要静态分析 237MB 的
   flue.dll），所以不放进启动流程，用 `python offsets.py --rescan-a8key` 显式做，
@@ -32,7 +42,10 @@ offsets.py — WMPF 偏移配置的版本自适应与失效自愈
 
 用法
   python offsets.py --check             # 只看当前偏移状态
-  python offsets.py --detect            # 强制重探主偏移（忽略冷却）
+  python offsets.py --detect            # 强制重探主偏移（忽略冷却，跳过内置库）
+  python offsets.py --seed              # 用内置偏移库直接写入当前版本（不扫描）
+  python offsets.py --import f.json     # 导入外部 addresses json
+  python offsets.py --list-builtin      # 内置库覆盖了哪些版本
   python offsets.py --rescan-a8key      # 重扫 a8key 观测钩子 RVA
 """
 import argparse
@@ -44,6 +57,8 @@ import subprocess
 import sys
 import threading
 import time
+
+import known_offsets as KO
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.join(HERE, "tools")
@@ -58,6 +73,11 @@ META_SUFFIX = ".meta.json"
 STALE_SUFFIX = ".stale"
 FAILS_SUFFIX = ".fails.json"
 MAX_FAILS = 2          # 连续失败到这个次数就不在每轮循环里反复重探了
+
+BUILTIN_SOURCE = "builtin"   # 元数据里标记「这份配置来自内置偏移库」
+# 这些来源的配置已经有人认真确认过（扫描成功 / 人工导入），
+# 即便后来被判失效也不能拿内置值覆盖：覆盖会掩盖真实原因，还可能反复横跳。
+NO_SEED_SOURCES = (BUILTIN_SOURCE, "auto-detect", "import")
 
 # 只认明确指向「偏移/版本/hook 失效」的代理输出。
 # 通道抖动（no-reply / ws-err / miniapp disconnected）不算，否则会把
@@ -159,16 +179,39 @@ def a8key_hooks_path(version):
 
 
 # ------------------------------------------------------------------ 状态判定
+def _load_meta(path):
+    """读 sidecar 元数据。返回 (meta, err)，err 为 None / "missing" / "broken"。
+
+    区分「没有文件」和「文件坏了」很重要：前者是手工放置的旧配置（可用，
+    补一份元数据即可），后者说明写盘被打断，不能当成可用配置。
+    """
+    if not os.path.isfile(path):
+        return None, "missing"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None, "broken"
+    if not isinstance(data, dict):
+        return None, "broken"
+    return data, None
+
+
 def state(wmpf_dir, version=None, root=None, versions=None):
     """纯查询：当前版本的偏移配置是否可用。不写任何文件。
 
-    返回 dict：state / version / config / meta / stale / fingerprint / reason
+    返回 dict：state / version / config / meta / stale / fails / fingerprint /
+               reason / need_meta / source / builtin
+
+    source 是这份配置的来历（builtin / auto-detect / import / legacy），
+    自愈逻辑靠它决定「要不要用内置值覆盖」。
     """
     if version is None:
         version = active_version(versions=versions, root=root)
     out = {"state": UNKNOWN, "version": version, "config": None, "meta": None,
            "stale": None, "fails": None, "fingerprint": None,
-           "reason": "", "need_meta": False}
+           "reason": "", "need_meta": False, "source": None,
+           "builtin": KO.has(version) if version else False}
     if not wmpf_dir:
         out["reason"] = "未找到 WMPFDebugger"
         return out
@@ -184,6 +227,8 @@ def state(wmpf_dir, version=None, root=None, versions=None):
         "fails": cfg + FAILS_SUFFIX,
         "fingerprint": fingerprint(version, root),
     })
+    meta, meta_err = _load_meta(out["meta"])
+    out["source"] = (meta or {}).get("source")
 
     if os.path.isfile(out["stale"]):
         try:
@@ -212,20 +257,16 @@ def state(wmpf_dir, version=None, root=None, versions=None):
         out["reason"] = "偏移配置为空或格式不对"
         return out
 
-    if not os.path.isfile(out["meta"]):
+    if meta_err == "broken":
+        out["state"] = STALE
+        out["reason"] = "指纹元数据损坏"
+        return out
+    if meta_err == "missing":
         # 手工放置 / 旧版程序生成的文件：没有指纹可比对。
         # 视为可用，但补一份元数据，之后就能感知 flue.dll 被替换。
         out["state"] = OK
         out["need_meta"] = True
         out["reason"] = "旧配置（无指纹元数据）"
-        return out
-
-    try:
-        with open(out["meta"], "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except (OSError, ValueError) as exc:
-        out["state"] = STALE
-        out["reason"] = "指纹元数据损坏：%s" % exc
         return out
     if str(meta.get("version")) != str(version):
         out["state"] = STALE
@@ -242,9 +283,10 @@ def state(wmpf_dir, version=None, root=None, versions=None):
     return out
 
 
-def needs_runtime_autodetect(wmpf_dir, version=None):
+def needs_runtime_autodetect(wmpf_dir, version=None, root=None):
     """配置不可用时，让 WMPFDebugger 带 --auto-detect 启动（临时兜底）。"""
-    return state(wmpf_dir, version=version)["state"] != OK
+    return state(wmpf_dir, version=version, root=root)["state"] != OK
+
 
 
 def ensure_meta(st):
@@ -295,29 +337,148 @@ def write_fails(path, count):
         pass
 
 
-def write_meta(meta_path, version, fp, source):
+def write_meta(meta_path, version, fp, source, extra=None):
+    """写 sidecar 元数据。extra 用于附加来历信息（如内置库的来源版本）。"""
     try:
         os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+        payload = {"version": str(version), "fingerprint": fp, "source": source,
+                   "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        for k, v in (extra or {}).items():
+            payload.setdefault(k, v)
         tmp = meta_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"version": str(version), "fingerprint": fp,
-                       "source": source, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
-                      f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp, meta_path)
     except OSError:
         pass
 
 
-def write_config(cfg_path, data, meta_path, version, fp, source="auto-detect"):
+def _dump_config(data):
+    """按上游风格序列化：对象缩进 2，纯数字数组留在一行（[64, 1616, 8]）。
+
+    只是为了和 WMPFDebugger 仓库里的 addresses.*.json 长得一样，方便人工比对；
+    frida 侧只按 JSON 解析，格式本身不影响行为。
+    """
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+
+    def inline(m):
+        items = [x.strip() for x in m.group(1).split(",")]
+        return "[" + ", ".join(items) + "]"
+
+    return re.sub(r"\[\s*\n\s*([0-9,\s]+?)\s*\n\s*\]", inline, text)
+
+
+def write_config(cfg_path, data, meta_path, version, fp, source="auto-detect",
+                 extra=None):
     """原子写回。配置本身保持上游 WMPFDebugger 的格式，元数据另放 sidecar。"""
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     tmp = cfg_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write(_dump_config(data))
     os.replace(tmp, cfg_path)
-    write_meta(meta_path, version, fp, source)
+    write_meta(meta_path, version, fp, source, extra)
     clear_stale(cfg_path + STALE_SUFFIX)
     write_fails(cfg_path + FAILS_SUFFIX, 0)
+
+
+# ------------------------------------------------------------------ 内置偏移
+def builtin_offsets(version):
+    """本机版本是否能用内置偏移。返回 (data or None, 说明)。
+
+    只认版本完全相同的那种：内置值对应的是特定 flue.dll 的 RVA，
+    版本不同还硬写就是往错位地址打 patch。
+    """
+    if not version:
+        return None, "未检测到 WMPF 版本"
+    data = KO.get(version)
+    if data is None:
+        return None, "内置偏移库没有 WMPF %s（现有：%s）" % (version, KO.version_text())
+    good, why = KO.validate(data)
+    if not good:
+        return None, "内置 WMPF %s 偏移不合法：%s" % (version, why)
+    return data, "内置 WMPF %s 偏移" % version
+
+
+def seed_builtin(st, log=None, force=False):
+    """把内置偏移写成本机版本的 addresses.<ver>.json。返回 (ok, 说明)。
+
+    不扫描、不 attach 进程，微信没开也能写，是扫描失效时的兜底。
+    force 允许版本不符时强行写入（人工确认过的场景），默认拒绝。
+    """
+    log = log or log_noop
+    cfg, version = st.get("config"), str(st.get("version") or "")
+    if not cfg or not version:
+        return False, "未检测到 WMPF 版本，无法落地内置偏移"
+
+    src = version
+    data = KO.get(version)
+    if data is None:
+        best = KO.latest()
+        if not (force and best):
+            return False, ("内置偏移库没有 WMPF %s（现有：%s）"
+                           % (version, KO.version_text()))
+        src = best
+        data = KO.get(best)
+        log("[offsets] 警告：拿 WMPF %s 的内置偏移写 WMPF %s 的配置，"
+            "版本不符时可能写坏内存（--force 已确认）" % (src, version))
+
+    good, why = KO.validate(data)
+    if not good:
+        return False, "内置偏移不合法：%s" % why
+    if src != version:
+        # 文件名即版本，配置里的 Version 也跟上，免得 frida 侧比对时产生歧义
+        data["Version"] = int(version) if version.isdigit() else version
+
+    write_config(cfg, data, st.get("meta") or (cfg + META_SUFFIX), version,
+                 st.get("fingerprint"), source=BUILTIN_SOURCE,
+                 extra={"builtin_from": src})
+    return True, "WMPF %s 偏移已由内置库写入 %s" % (src, cfg)
+
+
+def install_builtin(wmpf_dir, version=None, root=None, force=False, log=None):
+    """按当前版本落地内置偏移（CLI / 部署流程入口）。返回 (ok, 说明, 版本)。"""
+    log = log or log_noop
+    st = state(wmpf_dir, version=version, root=root)
+    if st["state"] == UNKNOWN:
+        return False, st["reason"], None
+    ok, why = seed_builtin(st, log=log, force=force)
+    if ok:
+        log("[offsets] " + why)
+    return ok, why, st["version"]
+
+
+def import_config(path, wmpf_dir, version=None, root=None, force=False, log=None):
+    """导入外部 addresses json（上游 PR / 别人给的偏移）。返回 (ok, 说明)。
+
+    写盘前先过一遍结构校验：宁可报「少个字段」，也不要把坏配置塞给 frida。
+    """
+    log = log or log_noop
+    if not os.path.isfile(path):
+        return False, "找不到文件：%s" % path
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        return False, "JSON 解析失败：%s" % exc
+    good, why = KO.validate(data)
+    if not good:
+        return False, "偏移数据不合法：%s" % why
+
+    st = state(wmpf_dir, version=version, root=root)
+    if st["state"] == UNKNOWN:
+        return False, st["reason"]
+    local = str(st["version"])
+    src_ver = str(data.get("Version") or "")
+    if src_ver != local:
+        if not force:
+            return False, ("该文件是 WMPF %s 的偏移，本机是 %s；"
+                           "确认可用再加 --force" % (src_ver or "未知", local))
+        log("[offsets] 警告：把 WMPF %s 的偏移写进 WMPF %s（--force 已确认）"
+            % (src_ver or "未知", local))
+        data["Version"] = int(local) if local.isdigit() else local
+    write_config(st["config"], data, st["meta"], local, st["fingerprint"],
+                 source="import")
+    return True, "已导入偏移（源版本 %s）到 %s" % (src_ver or "未知", st["config"])
 
 
 # ------------------------------------------------------------------ 失效信号
@@ -451,8 +612,13 @@ def recover_if_needed(wmpf_dir, node, log=None, force=False, version=None,
                       root=None, versions=None, timeout=90):
     """自愈入口。返回 (结果, 版本, 说明)。
 
-    结果：ok 已可用 / detected 刚重探成功 / skipped 条件不足 /
-          defer 连续失败改用上游兜底 / failed 本轮探测失败
+    结果：ok 已可用 / seeded 已用内置偏移落地 / detected 刚扫描成功 /
+          skipped 条件不足 / defer 连续失败改用上游兜底 / failed 本轮失败
+
+    顺序是「内置库 -> 扫描」，不是反过来：
+      · 扫描有失效的时候（微信改特征），内置库却是纯写盘，永远能走通；
+      · 内置库命中时不需要微信在跑，也不需要等 10 秒 attach。
+    force=True（--detect）跳过内置库强制重扫，否则手动重探永远到不了扫描那一步。
     """
     log = log or log_noop
     st = state(wmpf_dir, version=version, root=root, versions=versions)
@@ -464,11 +630,20 @@ def recover_if_needed(wmpf_dir, node, log=None, force=False, version=None,
             write_meta(st["meta"], st["version"], st["fingerprint"], "legacy")
         return "ok", st["version"], st["reason"]
 
+    # 1) 内置偏移优先。来源是 builtin / auto-detect / import 时不再覆盖：
+    #    那几种都已经有人确认过，覆盖只会掩盖问题、并和重探来回横跳。
+    if not force and st["source"] not in NO_SEED_SOURCES:
+        ok, why = seed_builtin(st, log=log)
+        if ok:
+            log("[offsets] " + why)
+            return "seeded", st["version"], why
+        log("[offsets] %s —— 改为自动探测" % why)
+
     fails = read_fails(st["fails"])
     if fails >= MAX_FAILS and not force:
         return "defer", st["version"], (
             "连续 %d 次探测失败，本轮交给 WMPFDebugger --auto-detect 兜底；"
-            "可运行 python offsets.py --detect 手动重试" % fails)
+            "可运行 python offsets.py --detect 或 --seed 手动处理" % fails)
 
     log("[offsets] 偏移需要更新：%s" % st["reason"])
     data, why = detect(node, wmpf_dir, log=log, timeout=timeout,
@@ -483,6 +658,7 @@ def recover_if_needed(wmpf_dir, node, log=None, force=False, version=None,
     write_fails(st["fails"], fails + 1)
     log("[offsets] 本轮探测失败：%s" % why)
     return "failed", st["version"], why
+
 
 
 # ------------------------------------------------------------------ a8key 观测钩子
@@ -538,6 +714,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只看当前偏移状态")
     ap.add_argument("--detect", action="store_true", help="强制重新探测主偏移")
+    ap.add_argument("--seed", action="store_true",
+                    help="用内置偏移库直接写入当前版本（不扫描，不需要微信）")
+    ap.add_argument("--import", dest="import_file", default="",
+                    help="导入外部 addresses json（如上游 PR 给的偏移）")
+    ap.add_argument("--list-builtin", action="store_true", help="列出内置偏移库")
+    ap.add_argument("--force", action="store_true",
+                    help="版本不符时仍强行写入（危险，需人工确认）")
     ap.add_argument("--rescan-a8key", action="store_true", help="重扫 a8key 观测钩子 RVA")
     ap.add_argument("--wmpf-dir", default="", help="WMPFDebugger 目录")
     ap.add_argument("--node", default="", help="node.exe 路径")
@@ -545,6 +728,18 @@ def main():
     ap.add_argument("--dll", default="", help="指定 flue.dll（仅 --rescan-a8key）")
     ap.add_argument("--timeout", type=float, default=90)
     args = ap.parse_args()
+
+    log = lambda m: print("[%s] %s" % (ts(), m), flush=True)
+
+    if args.list_builtin:
+        rows = KO.summary()
+        if not rows:
+            print("内置偏移库为空")
+            return 1
+        print("内置偏移库（WMPF 版本 -> 是否可用）")
+        for ver, good, why in rows:
+            print("  %-8s %s  %s" % (ver, "✓" if good else "✗", why))
+        return 0
 
     wmpf_dir = args.wmpf_dir
     node = args.node
@@ -562,7 +757,18 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
-    log = lambda m: print("[%s] %s" % (ts(), m), flush=True)
+    if args.seed:
+        ok, why, _ver = install_builtin(wmpf_dir, version=args.version or None,
+                                       force=args.force, log=log)
+        print(("成功：%s" % why) if ok else ("失败：%s" % why))
+        return 0 if ok else 1
+
+    if args.import_file:
+        ok, why = import_config(args.import_file, wmpf_dir,
+                                version=args.version or None,
+                                force=args.force, log=log)
+        print(("成功：%s" % why) if ok else ("失败：%s" % why))
+        return 0 if ok else 1
 
     if args.rescan_a8key:
         good, path, why = rescan_a8key(version=args.version or None,
@@ -575,6 +781,11 @@ def main():
     print("WMPF 版本   : %s" % (st["version"] or "未检测到"))
     print("偏移配置    : %s" % (st["config"] or "-"))
     print("flue.dll 指纹: %s" % (st["fingerprint"] or "-"))
+    print("配置来源    : %s" % (st["source"] or "-"))
+    if st["builtin"]:
+        print("内置偏移    : 有（WMPF %s，可直接 --seed 写入）" % st["version"])
+    else:
+        print("内置偏移    : 无（现有版本：%s，只能靠 --auto-detect）" % KO.version_text())
     print("状态        : %s  (%s)" % (st["state"], st["reason"]))
     if args.check:
         return 0 if st["state"] == OK else 1
@@ -586,7 +797,7 @@ def main():
         print("结果：%s / WMPF %s / %s" % (result, ver or "-", why))
         if result == "detected":
             print("提示：a8key 观测钩子的 RVA 也会变，需要时跑 python offsets.py --rescan-a8key")
-        return 0 if result in ("ok", "detected") else 1
+        return 0 if result in ("ok", "detected", "seeded") else 1
 
     ap.print_help()
     return 0

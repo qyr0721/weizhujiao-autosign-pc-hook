@@ -210,7 +210,9 @@ def preflight(base=HERE):
     wx_ver, _ = U.wechat_version()
     vers = U.find_wmpf_versions()
     wmpf = vers[-1] if vers else None
-    wmpf_known = (wmpf == U.KNOWN_VERSION)
+    # 内置偏移库里有这个版本，等价于「已知可用」：面板不必给版本行标警告色
+    has_builtin = bool(wmpf) and offsets.builtin_offsets(str(wmpf))[0] is not None
+    wmpf_known = (wmpf == U.KNOWN_VERSION) or has_builtin
 
     # ck.DEFAULT_WMPF 带本机的兜底路径，源码运行时用得上；
     # 用 exe 的话，setup 会把 WMPFDebugger 装到 exe 同目录，同样能找到。
@@ -227,6 +229,9 @@ def preflight(base=HERE):
     elif not wmpf_known:
         notes.append("WMPF %s 与内置基准 %s 不同，启动时将自动探测 hook 偏移"
                      % (wmpf, U.KNOWN_VERSION))
+    elif has_builtin and wmpf != U.KNOWN_VERSION:
+        # 有内置值就不需要扫描，别让面板显示「要探测 10 秒」吓人
+        notes.append("WMPF %s 有内置偏移，启动时直接写入（无需扫描）" % wmpf)
     if not wmpf_dir:
         problems.append("缺 WMPFDebugger")
         fixes.append("缺少 WMPFDebugger 或其依赖，程序将尝试自动部署")
@@ -297,8 +302,12 @@ class State:
             return self._feed_sign(m)
 
         # 版本变化 / 偏移自愈：面板要能区分「正在探测」和「探测完要重开小程序」
-        if "开始自动探测" in m or "正在探测 hook 偏移" in m:
+        if "使用内置偏移库" in m:
+            self.set_action("偏移缺失，正在写入内置偏移…")
+        elif "开始自动探测" in m or "正在探测 hook 偏移" in m:
             self.set_action("检测到新版本，正在探测 hook 偏移…")
+        elif "由内置库写入" in m or "已应用内置偏移" in m:
+            self.set_action("已应用内置偏移，无需扫描")
         elif "hook 偏移已自动更新" in m or "hook 偏移已更新" in m:
             self.set_action("偏移已更新，无需更换微信版本")
         elif "重新打开一次小程序" in m:
@@ -307,7 +316,7 @@ class State:
         elif "自动探测失败" in m or "偏移探测失败" in m:
             self.set_action("偏移探测失败，改用临时模式")
         elif "运行中检测到偏移失效" in m:
-            self.set_action("偏移失效，正在自动重探…")
+            self.set_action("偏移失效，正在自动修复…")
         elif "auto-detecting hook offsets" in m:
             self.set_action("正在注入调试 hook…（约 10 秒，此期间勿开小程序）")
         elif "you can now open any miniapps" in m or "script loaded" in m:
@@ -544,11 +553,13 @@ def auto_setup(log, state, panel, term):
 
 # ================================================================ 偏移配置补全
 def _ensure_offsets_once(log, state, panel, wmpf_dir, node):
-    """按当前 WMPF 版本补探测一次偏移（非致命）。
+    """按当前 WMPF 版本补一次偏移（非致命）。
 
     与 runmod.run 的启动自愈共用 offsets.recover_if_needed：这里先同步跑，
-    面板能显示「正在探测」；之后 run() 再查时状态已是 OK，不会重复探测。
-    微信未运行时跳过（auto-detect 要 attach 进程），交给上游临时模式兜底。
+    面板能显示「正在写入 / 正在探测」；之后 run() 再查时状态已是 OK，不会重复。
+
+    两条路差别很大：内置偏移库命中时是纯写盘，微信没运行也能写、而且秒完；
+    没命中才要 --auto-detect（要 attach 进程，微信没开就只能交给上游临时模式）。
     """
     try:
         st = offsets.state(wmpf_dir)
@@ -557,15 +568,23 @@ def _ensure_offsets_once(log, state, panel, wmpf_dir, node):
             return
         if st["state"] == offsets.UNKNOWN:
             return
-        if not U.list_processes({"wechatappex.exe"}):
+        builtin, _ = offsets.builtin_offsets(st["version"])
+        if builtin:
+            state.set_action("偏移缺失，正在写入 WMPF %s 的内置偏移…"
+                             % st["version"])
+        elif not U.list_processes({"wechatappex.exe"}):
             log.write("偏移需要更新但微信未运行——本次用 --auto-detect 临时模式")
             return
-        state.set_action("WMPF %s 已变化，正在探测 hook 偏移（约 10 秒）…"
-                         % (st["version"] or "?"))
+        else:
+            state.set_action("WMPF %s 已变化，正在探测 hook 偏移（约 10 秒）…"
+                             % (st["version"] or "?"))
         panel.render(state.snapshot())
         result, ver, why = offsets.recover_if_needed(
             wmpf_dir, node, log=log.write, timeout=90)
-        if result == "detected":
+        if result == "seeded":
+            log.write("已应用内置偏移：WMPF %s / %s" % (ver, why))
+            state.set_action("已应用内置偏移（WMPF %s）" % ver)
+        elif result == "detected":
             log.write("hook 偏移已自动更新：WMPF %s / %s" % (ver, why))
             state.set_action("偏移已更新（WMPF %s）" % ver)
         elif result == "failed":

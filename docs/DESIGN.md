@@ -132,12 +132,14 @@ Page.navigate -> net::ERR_ABORTED        ← 被 Redirect 接管，不是失败
 1. **a8key 有重定向限流**（`wechat_redirect limit reached, cancelling navigation`）。
    触发要带 cooldown，别循环重试。
 2. **代理活多久，小程序活多久**。项目退出时故意不关代理；单次模式也不静默退出。
-3. **RVA 仍与 WMPF 版本绑定，但主流程已能自愈**。`offsets.py` 按「当前版本 +
-   `flue.dll` 指纹」管理 `addresses.<ver>.json`：缺失、指纹变化、配置损坏或运行中被
-   明确报错时，自动跑一次 `--auto-detect` 并把结果写回；连续失败才退回上游的临时
-   `--auto-detect` 模式。用错偏移会让 `Interceptor.replace` 写错位地址，所以宁可
-   重探也绝不复用旧配置。只有**不参与签到**的 a8key 观测 RVA 还需按需
-   `python offsets.py --rescan-a8key` 重扫（这一步要静态分析 237MB 的 dll，不放进启动）。
+3. **RVA 仍与 WMPF 版本绑定，但主流程已能自愈，且不再完全依赖扫描**。`offsets.py` 按
+   「当前版本 + `flue.dll` 指纹」管理 `addresses.<ver>.json`：缺失、指纹变化、配置损坏或
+   运行中被明确报错时——先查 `known_offsets.py` 的内置库（同版本直接写盘，不需要微信、
+   不需要扫描），没有才跑 `--auto-detect`；连续失败才退回上游的临时 `--auto-detect` 模式。
+   用错偏移会让 `Interceptor.replace` 写错位地址，所以内置值只按**版本完全相同**匹配，
+   且被用过一次后若再判失效就不再重复写（否则会陷入写—报错—再写的死循环）。
+   只有**不参与签到**的 a8key 观测 RVA 还需按需 `python offsets.py --rescan-a8key`
+   重扫（这一步要静态分析 237MB 的 dll，不放进启动）。
 4. **通道只在「小程序启动那一刻」建立**，不会重连。顺序必须是：先起代理，再开小程序。
 5. **`.pdata` 比 `0xCC` 猜测可靠**。函数边界一定要从异常目录取。
 
@@ -147,5 +149,6 @@ Page.navigate -> net::ERR_ABORTED        ← 被 Redirect 接管，不是失败
 
 - patch 运行时内存属于绕过客户端自身的调试限制，存在账号风控成本；
 - WMPFDebugger 为 GPLv2，本仓库整体 GPL-2.0-only，二次分发需履约；
-- 上游若改结构，`--auto-detect` 也可能探不到；此时连续失败会退回临时模式并给出提示，
-  才需要人工用 `tools/pe_scan.py` 重新静态分析。
+- 上游若改结构，`--auto-detect` 也可能探不到；内置库覆盖了已知版本，两者都没有时
+  连续失败会退回临时模式并给出提示，才需要人工用 `tools/pe_scan.py` 重新静态分析，
+  或 `python offsets.py --import` 导入别人给的 json（见 `docs/OFFSETS.md`）。
