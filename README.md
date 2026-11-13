@@ -84,7 +84,7 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 
 | 项目 | 值 |
 | --- | --- |
-| 内置偏移库 | WMPF **26134**（可直接落地，无需扫描；见 `known_offsets.py`） |
+| 内置偏移库 | WMPF **18151 / 18955 / 25364 / 25819 / 26042 / 26134**（可直接落地，无需扫描；见 `known_offsets.py`） |
 | a8key 观测基准 | 微信 PC **4.1.15.56** / WMPF **25799**（仅调试观测用） |
 | 实际支持 | 内置命中 → 直接写配置；未命中 → 由 WMPFDebugger `--auto-detect` 探测当前 `flue.dll` 的 RVA，按版本写回 |
 
@@ -108,7 +108,8 @@ POST /wechat-api/v1/class-attendance/student-sign-in        {"courseId":..,"sign
 ### 扫描不出偏移时（内置偏移库）
 
 `--auto-detect` 是静态特征扫描，微信改掉特征后它就再也命中不了——这时**不是没有偏移可用**，
-只是拿不到新的。已知版本的 RVA 可以直接写，项目按版本内置了一批：
+只是拿不到新的。已知版本的 RVA 可以直接写，项目按版本内置了一批
+（**18151、18955、25364、25819、26042、26134**，覆盖新旧两种结构）：
 
 ```bash
 python offsets.py --check            # 看当前版本 / 指纹 / 配置来源 / 内置库有没有

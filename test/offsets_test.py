@@ -220,6 +220,27 @@ def test_builtin_library():
     bad3["MiniAppConfigStructOffsets"]["LaunchConfigOffsets"] = [64, 1616]
     ok(KO.validate(bad3)[0] is False, "指针链长度不对被拒")
 
+    # 6 个已知版本都要内置且通过校验，覆盖新旧两种结构
+    for ver in ("18151", "18955", "25364", "25819", "26042", "26134"):
+        d = KO.get(ver)
+        ok(d is not None and KO.validate(d)[0], "内置库覆盖 WMPF %s" % ver,
+           KO.version_text())
+    # 旧版结构：SceneOffsets 6 元素数组，不带新版字段
+    old = KO.get("25364")
+    ok(isinstance(old.get("SceneOffsets"), list) and len(old["SceneOffsets"]) == 6,
+       "旧版用 6 元素 SceneOffsets", str(old.get("SceneOffsets")))
+    ok("MiniAppConfigStructOffsets" not in old and "CastToJsonHookOffset" not in old,
+       "旧版不带新版字段", str(sorted(old.keys())))
+    ok(KO.validate(old)[0], "旧版结构通过校验")
+    # 新旧结构互斥：同时出现会被拒（hook.js 会取错下标）
+    both = KO.get("26134")
+    both["SceneOffsets"] = [64, 1616, 8, 1544, 16, 480]
+    ok(KO.validate(both)[0] is False, "新旧结构字段同时出现被拒")
+    # 旧版 SceneOffsets 长度不对被拒
+    short = KO.get("18151")
+    short["SceneOffsets"] = [56, 1416, 8, 1352, 16]
+    ok(KO.validate(short)[0] is False, "旧版 SceneOffsets 长度不对被拒")
+
     tmp = tempfile.mkdtemp(prefix="wzoffb_")
     orig_detect = O.detect
     orig_root = O.wmpf_root
@@ -253,6 +274,22 @@ def test_builtin_library():
         sup = ck.ProxySupervisor(wmpf, "fake-node", version=BVER)
         ok("--auto-detect" not in sup.extra,
            "落地后代理不再带 --auto-detect（启动不白等 10 秒）", str(sup.extra))
+
+        # 旧版结构（SceneOffsets）同样能走内置落地，不依赖新版字段
+        wmpf3, root3, dll3, cfg3 = make_env(os.path.join(tmp, "legacy"),
+                                            version="25364")
+        O.wmpf_root = lambda: root3
+        O.detect = must_not_scan
+        rl, vl, whyl = O.recover_if_needed(wmpf3, "fake-node", version="25364",
+                                           root=root3)
+        ok(rl == "seeded" and vl == "25364", "旧版结构也能内置落地",
+           str((rl, whyl)))
+        with open(cfg3, encoding="utf-8") as f:
+            got3 = json.load(f)
+        ok(isinstance(got3.get("SceneOffsets"), list)
+           and len(got3["SceneOffsets"]) == 6
+           and "MiniAppConfigStructOffsets" not in got3,
+           "旧版落盘内容就是 SceneOffsets 那份", str(got3.get("SceneOffsets")))
 
         # 内置那份跑起来仍被判失效：不能拿同一份反复重写，必须换扫描
         O.mark_stale(cfg + O.STALE_SUFFIX, "模拟代理报偏移错误")

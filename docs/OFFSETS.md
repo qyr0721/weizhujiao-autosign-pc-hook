@@ -13,8 +13,13 @@ WMPFDebugger 往 `flue.dll` 里打两处 patch，靠的是 flue.dll 里 **固定
 |---|---|
 | `LoadStartHookOffset` | `AppletIndexContainer::OnLoadStart`，把小程序拉成调试态（`scene=1101`、调试服务端改成 `ws://localhost:9421`） |
 | `CDPFilterHookOffset` | `SendToClientFilter`，短路 CDP 消息过滤器，否则调试消息被运行时丢掉 |
-| `CastToJsonHookOffset` | 结构体转 JSON 的公共函数，hook 里用来回读 config |
-| `MiniAppConfigStructOffsets` | 上面那个 config 结构体的字段偏移（启动配置、远程调试配置、scene、ws 地址字符串、调试模式标志） |
+| `CastToJsonHookOffset` | **（新版结构）**结构体转 JSON 的公共函数，CDP 过滤器用 replace 方式挂它 |
+| `MiniAppConfigStructOffsets` | **（新版结构）**config 结构体的字段偏移（启动配置、远程调试配置、scene、ws 地址字符串、调试模式标志） |
+| `SceneOffsets` | **（旧版结构）**6 元素指针链，作用等价于上面的 `MiniAppConfigStructOffsets` |
+
+`flue.dll` 在约 WMPF 25710 前后换过布局：**之前**用 `SceneOffsets`（6 元素数组），
+**之后**用 `MiniAppConfigStructOffsets`（对象）+ `CastToJsonHookOffset`。两套字段由
+`frida/hook.js` 按「有没有 `MiniAppConfigStructOffsets`」自动选择，不能混写。
 
 RVA 与 `flue.dll` 的具体构建一对一绑定。微信换 WMPF 版本 → 换了 dll → 这些数字全变。
 **打错位置的后果不是报错，而是 frida 往错地址写内存 → `EXCEPTION_ACCESS_VIOLATION`**，
@@ -39,27 +44,40 @@ RVA 与 `flue.dll` 的具体构建一对一绑定。微信换 WMPF 版本 → �
 ## 3. 内置库长什么样
 
 `known_offsets.py` 里的 `BUILTIN` 就是一个版本号到配置的字典，
-**内容与上游 `frida/config/win32/addresses.<ver>.json` 完全一致**：
+**内容与上游 `frida/config/win32/addresses.<ver>.json` 完全一致**。
+因为上游换过结构，这里按版本存两套格式：
+
+新版结构（约 25710 之后，25819 / 26042 / 26134）：
 
 ```python
-BUILTIN = {
-    "26134": {
-        "Version": 26134,
-        "LoadStartHookOffset": "0x2DEDC70",
-        "CDPFilterHookOffset": "0x39D4E80",
-        "CastToJsonHookOffset": "0xBB418E0",
-        "MiniAppConfigStructOffsets": {
-            "LaunchConfigOffsets": [64, 1616, 8],
-            "RemoteDebugConfigOffsets": [1544, 16],
-            "SceneOffset": 480,
-            "WebSocketURLStringOffset": 648,
-            "RemoteDebugModeOffset": 748,
-        },
+"26134": {
+    "Version": 26134,
+    "LoadStartHookOffset": "0x2DEDC70",
+    "CDPFilterHookOffset": "0x39D4E80",
+    "CastToJsonHookOffset": "0xBB418E0",
+    "MiniAppConfigStructOffsets": {
+        "LaunchConfigOffsets": [64, 1616, 8],
+        "RemoteDebugConfigOffsets": [1544, 16],
+        "SceneOffset": 480,
+        "WebSocketURLStringOffset": 648,
+        "RemoteDebugModeOffset": 748,
     },
-}
+},
+```
+
+旧版结构（≤ 25364，18151 / 18955 / 25364）：
+
+```python
+"25364": {
+    "Version": 25364,
+    "LoadStartHookOffset": "0x2a85700",
+    "CDPFilterHookOffset": "0x391c200",
+    "SceneOffsets": [64, 1512, 8, 1448, 16, 456],
+},
 ```
 
 刻意不做字段转换：中间多一层映射，就有和上游漂移的可能，而漂移的代价是崩进程。
+当前内置库覆盖：**18151、18955、25364、25819、26042、26134**。
 
 落盘时写成 `<WMPFDebugger>/frida/config/win32/addresses.<当前版本>.json`，
 旁边一并写 `.meta.json`（记录版本、`flue.dll` 指纹、来源），
@@ -119,8 +137,9 @@ python -c "import known_offsets as K; print(K.validate(K.get('26140')))"   # 应
 python test/offsets_test.py                                                 # 全套偏移测试
 ```
 
-`validate` 只查结构和取值范围（0x 十六进制、RVA 在 32 位内、指针链长度 3/2），
-**不判断 RVA 是否真的指向那个函数**——那件事只能靠真机跑通来证明（见 TESTING.md L1/L2）。
+`validate` 只查结构和取值范围（0x 十六进制、RVA 在 32 位内、指针链长度 3/2、
+旧版 `SceneOffsets` 长度 6、新旧结构字段互斥），**不判断 RVA 是否真的指向那个函数**——
+那件事只能靠真机跑通来证明（见 TESTING.md L1/L2）。
 
 ---
 
@@ -128,7 +147,7 @@ python test/offsets_test.py                                                 # �
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `内置偏移库没有 WMPF xxxxx（现有：26134）` | 版本不在库里 | `--import` 自己的 json，或 `--seed --force`（确认过再上） |
+| `内置偏移库没有 WMPF xxxxx（现有：18151、18955、25364、25819、26042、26134）` | 版本不在库里 | `--import` 自己的 json，或 `--seed --force`（确认过再上） |
 | `--seed --force` 后小程序起不来 / 微信崩溃 | 版本不符，RVA 错位 | 删掉 `addresses.<ver>.json` + `.meta.json`，重开小程序，改用 `--detect` |
 | 面板显示「已应用内置偏移」但通道还是不通 | 代理是旧的（还带着旧偏移）在跑 | 结束 node 进程后重启程序；运行中更新过偏移的话，重新打开一次小程序 |
 | 每次启动都提示偏移失效 | 该版本内置值不对 | 换成 `--import` 的正确数值；内置那份被判失效后不会再被自动重写 |
