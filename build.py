@@ -48,7 +48,10 @@ PYI_BASE = [
 SKIP_DIRS = {"__pycache__", ".git", ".github", ".vscode", ".idea", "logs", "test"}
 SKIP_FILES = {"proxy.log", "run.log", "get_openid.log", "openid.txt",
               "openid.stale", "config.json", "state.json", "a8key_scan.json"}
-SKIP_SUFFIX = (".log", ".pyc", ".pyo", ".tmp", ".part", ".zip")
+# *.stale / *.fails.json 是「本机上一轮探测失败」的运行时状态，只对打包所在的
+# 那台机器有意义。带进发布包会让别人的第一次启动就显示「偏移失效」，所以不发。
+SKIP_SUFFIX = (".log", ".pyc", ".pyo", ".tmp", ".part", ".zip",
+               ".stale", ".fails.json")
 
 
 def log(msg):
