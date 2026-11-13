@@ -23,7 +23,7 @@ import time
 import unicodedata
 
 APP = "微助教自动签到"
-VER = "v1.6.1"
+VER = "v1.6.2"
 AUTHOR = "Hikari"
 REPO = "github.com/qyr0721/weizhujiao-autosign-pc-hook"
 
